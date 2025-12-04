@@ -342,8 +342,8 @@
 
         <ResizableHandle withHandle class="border-border bg-border/40" />
 
-        <ResizablePanel defaultSize={30} minSize={25} class="h-full overflow-y-auto border-l border-border/60 bg-card">
-          <div class="p-4 space-y-3">
+        <ResizablePanel defaultSize={30} minSize={25} class="h-full border-l border-border/60 bg-card">
+          <div class="p-4 space-y-3 h-full overflow-y-auto">
             <div class="flex items-center justify-between">
               <button
                 class="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
