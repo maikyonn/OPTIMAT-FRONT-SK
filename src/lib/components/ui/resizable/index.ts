@@ -7,7 +7,7 @@ export {
 	Pane,
 	Handle,
 	//
-	PaneGroup as ResizablePaneGroup,
-	Pane as ResizablePane,
+	PaneGroup as ResizablePanelGroup,
+	Pane as ResizablePanel,
 	Handle as ResizableHandle,
 };
