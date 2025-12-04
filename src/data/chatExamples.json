@@ -1,0 +1,271 @@
+{
+  "scenarios": [
+    {
+      "id": 1,
+      "title": "Local Trip in Walnut Creek",
+      "description": "Going from one location to another within Walnut Creek",
+      "conversation": [
+        {
+          "type": "message",
+          "role": "human",
+          "content": "I need to get from Safeway on Broadway to Kaiser Permanente in Walnut Creek",
+          "delay": 1500
+        },
+        {
+          "type": "wait",
+          "duration": 3000,
+          "showThinking": true
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Walnut Creek to Berkeley",
+      "description": "Longer distance trip to Berkeley",
+      "conversation": [
+        {
+          "type": "message",
+          "role": "human",
+          "content": "I'm at Walnut Creek BART station and need to get to UC Berkeley campus",
+          "delay": 1500
+        },
+        {
+          "type": "wait",
+          "duration": 3000,
+          "showThinking": true
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Early Morning Trip (3 AM)",
+      "description": "Very early morning when most services aren't operating",
+      "conversation": [
+        {
+          "type": "message",
+          "role": "human",
+          "content": "I need transportation from Broadway Plaza to the airport at 3 AM tomorrow morning",
+          "delay": 1500
+        },
+        {
+          "type": "wait",
+          "duration": 3500,
+          "showThinking": true
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "ADA Paratransit Only",
+      "description": "Looking specifically for ADA paratransit services",
+      "conversation": [
+        {
+          "type": "message",
+          "role": "human",
+          "content": "I use a wheelchair and need ADA paratransit from Rossmoor to Walnut Creek Senior Center",
+          "delay": 1500
+        },
+        {
+          "type": "wait",
+          "duration": 3000,
+          "showThinking": true
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Medical Appointment",
+      "description": "Trip to medical facility with specific requirements",
+      "conversation": [
+        {
+          "type": "message",
+          "role": "human",
+          "content": "I have a doctor's appointment at John Muir Medical Center and need reliable transportation from my home in Rossmoor",
+          "delay": 2000
+        },
+        {
+          "type": "wait",
+          "duration": 3000,
+          "showThinking": true
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Shopping Trip",
+      "description": "Going shopping with potential return trip considerations",
+      "conversation": [
+        {
+          "type": "message",
+          "role": "human",
+          "content": "I need to go grocery shopping at Target from my home near Pleasant Hill BART",
+          "delay": 1500
+        },
+        {
+          "type": "wait",
+          "duration": 3000,
+          "showThinking": true
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Volunteer Driver Services",
+      "description": "Looking specifically for volunteer driver programs",
+      "conversation": [
+        {
+          "type": "message",
+          "role": "human",
+          "content": "I prefer volunteer driver services and need to get from Orinda to Walnut Creek for a social activity",
+          "delay": 2000
+        },
+        {
+          "type": "wait",
+          "duration": 3000,
+          "showThinking": true
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Multi-Step Conversation",
+      "description": "Complex conversation with follow-up questions",
+      "conversation": [
+        {
+          "type": "message",
+          "role": "human",
+          "content": "I need to find transportation options for my elderly mother",
+          "delay": 1500
+        },
+        {
+          "type": "wait",
+          "duration": 2500,
+          "showThinking": true
+        },
+        {
+          "type": "message",
+          "role": "human",
+          "content": "She lives at Rossmoor and needs to go to John Muir hospital twice a week",
+          "delay": 2000,
+          "waitForPreviousResponse": true
+        },
+        {
+          "type": "wait",
+          "duration": 3000,
+          "showThinking": true
+        },
+        {
+          "type": "message",
+          "role": "human",
+          "content": "She uses a walker and prefers door-to-door service",
+          "delay": 2000,
+          "waitForPreviousResponse": true
+        },
+        {
+          "type": "wait",
+          "duration": 3000,
+          "showThinking": true
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Round Trip Planning",
+      "description": "Planning a trip with return journey",
+      "conversation": [
+        {
+          "type": "message",
+          "role": "human",
+          "content": "I need to go to a medical appointment at 2 PM and will need a ride back home around 3:30 PM",
+          "delay": 2000
+        },
+        {
+          "type": "wait",
+          "duration": 2500,
+          "showThinking": true
+        },
+        {
+          "type": "message",
+          "role": "human",
+          "content": "I'm going from Shadelands Business Park to John Muir Medical Center in Walnut Creek",
+          "delay": 2000,
+          "waitForPreviousResponse": true
+        },
+        {
+          "type": "wait",
+          "duration": 3000,
+          "showThinking": true
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Accessibility Requirements",
+      "description": "Detailed accessibility needs discussion",
+      "conversation": [
+        {
+          "type": "message",
+          "role": "human",
+          "content": "I have specific accessibility needs and want to understand my transportation options",
+          "delay": 1500
+        },
+        {
+          "type": "wait",
+          "duration": 2000,
+          "showThinking": true
+        },
+        {
+          "type": "message",
+          "role": "human",
+          "content": "I use a power wheelchair and need a vehicle with a ramp, not a lift",
+          "delay": 2000,
+          "waitForPreviousResponse": true
+        },
+        {
+          "type": "wait",
+          "duration": 2500,
+          "showThinking": true
+        },
+        {
+          "type": "message",
+          "role": "human",
+          "content": "I also travel with a service dog. Are there providers that accommodate both?",
+          "delay": 2000,
+          "waitForPreviousResponse": true
+        },
+        {
+          "type": "wait",
+          "duration": 3000,
+          "showThinking": true
+        }
+      ]
+    }
+  ],
+  "config": {
+    "defaultMessageDelay": 2000,
+    "defaultWaitDuration": 3000,
+    "maxScenariosToShow": 8
+  },
+  "documentation": {
+    "messageStep": {
+      "type": "message",
+      "role": "human or ai - who is speaking",
+      "content": "The message text",
+      "delay": "Optional: delay before showing this message (ms)",
+      "waitForPreviousResponse": "Optional: wait for AI response before continuing"
+    },
+    "waitStep": {
+      "type": "wait",
+      "duration": "How long to wait (ms)",
+      "showThinking": "Optional: show 'AI is thinking...' indicator"
+    },
+    "tips": [
+      "Start with simple messages and gradually add complexity",
+      "Use realistic conversation flows",
+      "Include appropriate delays to make the demo feel natural",
+      "For multi-step conversations, use waitForPreviousResponse",
+      "Keep initial messages concise but informative",
+      "Test different scenarios to cover various use cases"
+    ]
+  }
+}

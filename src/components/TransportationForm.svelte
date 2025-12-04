@@ -1,0 +1,597 @@
+<script>
+  import { createEventDispatcher, onMount } from 'svelte';
+  import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
+  import { Button } from '$lib/components/ui/button';
+  import { Input } from '$lib/components/ui/input';
+  const dispatch = createEventDispatcher();
+
+  // Helper function to format datetime-local string
+  function formatDateTimeLocal(date) {
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+      .toISOString()
+      .slice(0, 16);
+  }
+
+  // Set default times
+  const now = new Date();
+  const fourHoursLater = new Date(now.getTime() + (4 * 60 * 60 * 1000));
+
+  export let loading = false;
+  export let error = null;
+  export let responseData = null;
+  let showAdvanced = false;
+
+  // Add predefined origin addresses
+  const predefinedOrigins = [
+    {
+      label: "Safeway (Walnut Creek)",
+      address: "600 S Broadway, Walnut Creek, CA"
+    },
+    {
+      label: "BART (Walnut Creek)",
+      address: "200 Ygnacio Valley Road, Walnut Creek, CA 94596"
+    },
+    {
+      label: "Rossmoor Golf Clubs",
+      address: "1010 Stanley Dollar Dr, Walnut Creek, CA 94595"
+    },
+    {
+      label: "Kaiser Permanente",
+      address: "1425 S Main St, Walnut Creek, CA 94596"
+    }
+  ];
+
+  // Add predefined destinations
+  const predefinedDestinations = [
+    {
+      label: "Broadway Plaza",
+      address: "1275 Broadway Plaza, Walnut Creek, CA 94596"
+    },
+    {
+      label: "UC Berkeley",
+      address: "Barrow Ln, Berkeley, CA 94704"
+    },
+    {
+      label: "Rossmoor Shopping Center",
+      address: "1980 Tice Valley Blvd, Walnut Creek, CA 94595"
+    },
+    {
+      label: "Police Station",
+      address: "1666 N Main St, Walnut Creek, CA 94596"
+    },
+    {
+      label: "Stoneridge Shopping Center",
+      address: "1 Stoneridge Mall Rd, Pleasanton, CA 94588"
+    }
+  ];
+
+  // Update formData to use first predefined origin and destination as default
+  let formData = {
+    departureTime: formatDateTimeLocal(now),
+    returnTime: formatDateTimeLocal(fourHoursLater),
+    originAddress: predefinedOrigins[0].address,
+    destinationAddress: predefinedDestinations[0].address,
+    providerType: '',
+    routingType: '',
+    scheduleType: '',
+    planningType: '',
+    eligibilityReqContains: '',
+    providerOrg: '',
+    providerNameContains: '',
+    hasServiceZone: null,
+    bookingMethod: '',
+    fareType: ''
+  };
+
+  function handleSubmit() {
+    dispatch('submit', formData);
+  }
+
+  // // Watch for changes to addresses using $: reactive statements
+  // $: if (formData.originAddress) {
+  //   dispatch('originUpdate', formData.originAddress);
+  // }
+
+  // $: if (formData.destinationAddress) {
+  //   dispatch('destinationUpdate', formData.destinationAddress);
+  // }
+
+  // Dispatch initial addresses on mount
+  onMount(() => {
+    dispatch('originUpdate', formData.originAddress);
+    dispatch('destinationUpdate', formData.destinationAddress);
+  });
+
+  function handleReturnToForm() {
+    responseData = null;
+    error = null;
+  }
+
+  function formatServiceHours(hoursValue) {
+    try {
+      const hours = typeof hoursValue === 'string' ? JSON.parse(hoursValue) : hoursValue;
+      if (!hours?.hours?.[0]) return 'Hours not available';
+
+      const schedule = hours.hours[0];
+      const days = schedule.day.split('').map((day, index) => {
+        const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        return day === '1' ? weekdays[index] : null;
+      }).filter(Boolean).join(', ');
+
+      // Format time from "HHMM" to "HH:MM AM/PM"
+      const formatTime = (time) => {
+        const hour = parseInt(time.substring(0, 2));
+        const minute = time.substring(2);
+        const period = hour >= 12 ? 'PM' : 'AM';
+        const formattedHour = hour % 12 || 12;
+        return `${formattedHour}:${minute} ${period}`;
+      };
+
+      const start = formatTime(schedule.start);
+      const end = formatTime(schedule.end);
+
+      return `${days}: ${start} - ${end}`;
+    } catch {
+      return 'Hours not available';
+    }
+  }
+
+  function getProviderTypeLabel(type) {
+    const types = {
+      'ADA-para': 'ADA Paratransit',
+      'volunteer-driver': 'Volunteer Driver Program'
+    };
+    return types[type] || type;
+  }
+
+  function parseBookingInfo(bookingValue) {
+    try {
+      const booking = typeof bookingValue === 'string' ? JSON.parse(bookingValue) : bookingValue;
+      if (!booking) return null;
+      return booking.call || booking.phone || booking.contact || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function getEligibilityList(provider) {
+    let elig = provider?.eligibility_reqs;
+    if (elig && !Array.isArray(elig) && typeof elig === 'object' && Array.isArray(elig.eligibility_reqs)) {
+      elig = elig.eligibility_reqs;
+    }
+    if (elig && !Array.isArray(elig)) {
+      elig = [String(elig)];
+    }
+    return Array.isArray(elig) ? elig : [];
+  }
+
+  async function handleOriginBlur() {
+    if (formData.originAddress) {
+      dispatch('originUpdate', formData.originAddress);
+    }
+  }
+
+  async function handleDestinationBlur() {
+    if (formData.destinationAddress) {
+      dispatch('destinationUpdate', formData.destinationAddress);
+    }
+  }
+
+  // Handle origin selection
+  function handleOriginSelect(event) {
+    formData.originAddress = event.target.value;
+    handleOriginBlur();
+  }
+
+  // Handle destination selection
+  function handleDestinationSelect(event) {
+    formData.destinationAddress = event.target.value;
+    handleDestinationBlur();
+  }
+</script>
+
+{#if responseData}
+  <div class="space-y-4">
+    {#if responseData.data.length === 0}
+      <div class="text-gray-500 text-center py-8 bg-gray-50 rounded-lg">
+        <div class="text-4xl mb-2">🚌</div>
+        <p>No transportation providers found for your route and criteria.</p>
+        <p class="text-sm mt-1">Try adjusting your search parameters.</p>
+      </div>
+    {:else}
+      <div class="space-y-3">
+        {#each responseData.data as provider, index}
+          <div
+            class="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
+            role="button"
+            tabindex="0"
+            aria-label={`Focus ${provider.provider_name} service zone`}
+            on:click={() => dispatch('focusProvider', provider)}
+            on:keydown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                dispatch('focusProvider', provider);
+              }
+            }}
+          >
+            <div class="flex items-start space-x-3">
+              <!-- Color indicator -->
+              <div 
+                class="w-4 h-4 rounded-full flex-shrink-0 mt-1"
+                style={`background-color: ${provider._zone_color || '#3B82F6'}`}
+                title="Service zone color"
+              ></div>
+              
+              <!-- Service details -->
+              <div class="flex-1">
+                <h4 class="font-medium text-gray-900">{provider.provider_name}</h4>
+                <dl class="mt-2 text-sm text-gray-600 space-y-1">
+                  <div class="flex">
+                    <dt class="font-medium w-24">Type:</dt>
+                    <dd>{getProviderTypeLabel(provider.provider_type)}</dd>
+                  </div>
+                  {#if provider.routing_type}
+                    <div class="flex">
+                      <dt class="font-medium w-24">Service:</dt>
+                      <dd>{provider.routing_type.replace(/-/g, ' ')}</dd>
+                    </div>
+                  {/if}
+                  {#if provider.schedule_type}
+                    <div class="flex">
+                      <dt class="font-medium w-24">Schedule:</dt>
+                      <dd>{
+                        (() => {
+                          const st = provider.schedule_type;
+                          if (typeof st === 'object' && st.schedule_type) return st.schedule_type.replace(/-/g,' ');
+                          return st.toString().replace(/-/g,' ');
+                        })()
+                      }</dd>
+                    </div>
+                  {/if}
+                  <div class="flex">
+                    <dt class="font-medium w-24">Hours:</dt>
+                    <dd>{formatServiceHours(provider.service_hours)}</dd>
+                  </div>
+                  <div class="flex">
+                    <dt class="font-medium w-24">Booking:</dt>
+                    <dd>
+                      {#if parseBookingInfo(provider.booking)}
+                        <a href="tel:{parseBookingInfo(provider.booking)}" class="text-blue-600 hover:underline">
+                          {parseBookingInfo(provider.booking)}
+                        </a>
+                      {:else}
+                        {provider.booking?.method ? provider.booking.method : 'Contact provider'}
+                      {/if}
+                    </dd>
+                  </div>
+                  {#if getEligibilityList(provider).length}
+                    <div class="flex">
+                      <dt class="font-medium w-24">Eligibility:</dt>
+                      <dd class="flex flex-wrap gap-1">
+                        {#each getEligibilityList(provider) as req}
+                          <span class="px-2 py-0.5 bg-gray-100 rounded text-xs text-gray-700">{req}</span>
+                        {/each}
+                      </dd>
+                    </div>
+                  {/if}
+                  {#if provider.website}
+                    <div class="flex">
+                      <dt class="font-medium w-24">Website:</dt>
+                      <dd>
+                        <a href={provider.website} target="_blank" rel="noopener noreferrer" 
+                           class="text-blue-600 hover:underline">
+                          Visit website
+                        </a>
+                      </dd>
+                    </div>
+                  {/if}
+                </dl>
+              </div>
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
+
+    <!-- Trip Details Summary -->
+    <div class="bg-gray-50 rounded-lg p-4 text-sm">
+      <h3 class="font-medium text-gray-900 mb-2">Your Trip Details</h3>
+      <div class="space-y-1 text-gray-600">
+        <p><span class="font-medium">From:</span> {formData.originAddress}</p>
+        <p><span class="font-medium">To:</span> {formData.destinationAddress}</p>
+        <p><span class="font-medium">Departure:</span> {new Date(formData.departureTime).toLocaleString()}</p>
+        <p><span class="font-medium">Return:</span> {new Date(formData.returnTime).toLocaleString()}</p>
+      </div>
+    </div>
+
+    <div class="flex justify-end">
+      <button
+        type="button"
+        class="bg-white py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+        on:click={handleReturnToForm}
+      >
+        Submit Another Request
+      </button>
+    </div>
+  </div>
+
+{:else if error}
+  <div class="rounded-md bg-red-50 p-4">
+    <div class="flex">
+      <div class="flex-shrink-0">
+        <!-- You can add an error icon here -->
+      </div>
+      <div class="ml-3">
+        <h3 class="text-sm font-medium text-red-800">Error Submitting Request</h3>
+        <div class="mt-2 text-sm text-red-700">
+          <p>Error: {error.error || error}</p>
+          {#if error.details}
+            <ul class="list-disc list-inside mt-2">
+              {#each Object.entries(error.details) as [field, message]}
+                <li>{message}</li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+        <div class="mt-4">
+          <button
+            type="button"
+            class="bg-red-50 text-red-800 px-4 py-2 rounded-md text-sm font-medium hover:bg-red-100"
+            on:click={handleReturnToForm}
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+{:else}
+  <form on:submit|preventDefault={handleSubmit} class="space-y-4">
+    <!-- Basic fields always visible -->
+    <Card class="shadow-sm border-border/60">
+      <CardHeader>
+        <CardTitle class="text-lg">Plan your trip</CardTitle>
+      </CardHeader>
+      <CardContent class="space-y-4">
+        <div class="grid grid-cols-1 gap-3">
+          <div class="space-y-1">
+            <label for="departureTime" class="block text-sm font-medium text-muted-foreground">Departure time</label>
+            <Input 
+              id="departureTime"
+              type="datetime-local" 
+              bind:value={formData.departureTime}
+              required
+            />
+          </div>
+
+          <div class="space-y-1">
+            <label for="returnTime" class="block text-sm font-medium text-muted-foreground">Return time</label>
+            <Input 
+              id="returnTime"
+              type="datetime-local" 
+              bind:value={formData.returnTime}
+              required
+            />
+          </div>
+
+          <div class="space-y-1">
+            <label for="originAddress" class="block text-sm font-medium text-muted-foreground">Origin</label>
+            <select
+              id="originAddress"
+              bind:value={formData.originAddress}
+              on:change={handleOriginSelect}
+              class="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              required
+            >
+              {#each predefinedOrigins as origin}
+                <option value={origin.address}>
+                  {origin.label}
+                </option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="space-y-1">
+            <label for="destinationAddress" class="block text-sm font-medium text-muted-foreground">Destination</label>
+            <select
+              id="destinationAddress"
+              bind:value={formData.destinationAddress}
+              on:change={handleDestinationSelect}
+              class="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              required
+            >
+              {#each predefinedDestinations as destination}
+                <option value={destination.address}>
+                  {destination.label}
+                </option>
+              {/each}
+            </select>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+
+    <!-- Advanced toggle -->
+    <div class="pt-1">
+      <button
+        type="button"
+        class="inline-flex items-center text-sm font-medium text-indigo-700 hover:text-indigo-800"
+        on:click={() => showAdvanced = !showAdvanced}
+      >
+        <span class="mr-2">{showAdvanced ? 'Hide' : 'Show'} advanced filters</span>
+        <svg class={`w-4 h-4 transition-transform ${showAdvanced ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+    </div>
+
+    {#if showAdvanced}
+      <Card class="border-dashed">
+        <CardHeader>
+          <CardTitle class="text-base text-muted-foreground">Advanced filters</CardTitle>
+        </CardHeader>
+        <CardContent class="space-y-3">
+        <!-- Provider Type Filter -->
+        <div class="space-y-1">
+          <label for="providerType" class="block text-sm font-medium text-gray-700">Provider type</label>
+          <select 
+            id="providerType"
+            bind:value={formData.providerType}
+            class="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <option value="">Any</option>
+            <option value="Bus">Bus</option>
+            <option value="Train">Train</option>
+            <option value="Shuttle">Shuttle</option>
+            <option value="Paratransit">Paratransit</option>
+            <option value="On-demand">On-demand</option>
+            <option value="ADA-para">ADA Paratransit</option>
+            <option value="volunteer-driver">Volunteer Driver</option>
+          </select>
+        </div>
+
+        <!-- Routing Type Filter -->
+        <div class="space-y-1">
+          <label for="routingType" class="block text-sm font-medium text-gray-700">Routing type</label>
+          <select 
+            id="routingType"
+            bind:value={formData.routingType}
+            class="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <option value="">Any</option>
+            <option value="Fixed">Fixed Route</option>
+            <option value="Flexible">Flexible Route</option>
+            <option value="On-demand">On-demand</option>
+            <option value="door-to-door">Door-to-door</option>
+            <option value="curb-to-curb">Curb-to-curb</option>
+          </select>
+        </div>
+
+        <!-- Schedule Type Filter -->
+        <div class="space-y-1">
+          <label for="scheduleType" class="block text-sm font-medium text-gray-700">Schedule type</label>
+          <select 
+            id="scheduleType"
+            bind:value={formData.scheduleType}
+            class="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <option value="">Any</option>
+            <option value="Static">Static</option>
+            <option value="Dynamic">Dynamic</option>
+            <option value="Real-time">Real-time</option>
+          </select>
+        </div>
+
+        <!-- Planning Type Filter -->
+        <div class="space-y-1">
+          <label for="planningType" class="block text-sm font-medium text-gray-700">Planning type</label>
+          <select 
+            id="planningType"
+            bind:value={formData.planningType}
+            class="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <option value="">Any</option>
+            <option value="Manual">Manual</option>
+            <option value="Algorithmic">Algorithmic</option>
+            <option value="Hybrid">Hybrid</option>
+          </select>
+        </div>
+
+        <!-- Eligibility Requirements Filter (contains) -->
+        <div class="space-y-1">
+          <label for="eligibilityReqContains" class="block text-sm font-medium text-gray-700">Eligibility text (contains)</label>
+          <Input 
+            id="eligibilityReqContains"
+            bind:value={formData.eligibilityReqContains}
+            placeholder="e.g., ADA, senior, veteran"
+          />
+        </div>
+
+        <!-- Provider Organization Filter -->
+        <div class="space-y-1">
+          <label for="providerOrg" class="block text-sm font-medium text-gray-700">Provider organization</label>
+          <Input 
+            id="providerOrg"
+            bind:value={formData.providerOrg}
+            placeholder="e.g., Metro Transit"
+          />
+        </div>
+
+        <!-- Provider Name Search -->
+        <div class="space-y-1">
+          <label for="providerNameContains" class="block text-sm font-medium text-gray-700">Provider name contains</label>
+          <Input 
+            id="providerNameContains"
+            bind:value={formData.providerNameContains}
+            placeholder="e.g., transit"
+          />
+        </div>
+
+        <!-- Has Service Zone Filter -->
+        <div class="space-y-1">
+          <label for="hasServiceZone" class="block text-sm font-medium text-gray-700">Service zone</label>
+          <select 
+            id="hasServiceZone"
+            bind:value={formData.hasServiceZone}
+            class="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            on:change={(e) => {
+              const val = e.target.value;
+              formData.hasServiceZone = val === 'null' ? null : val === 'true';
+            }}
+          >
+            <option value="null">Any</option>
+            <option value="true">Has service zone only</option>
+            <option value="false">No service zone</option>
+          </select>
+        </div>
+
+        <!-- Booking method filter -->
+        <div class="space-y-1">
+          <label for="bookingMethod" class="block text-sm font-medium text-gray-700">Booking method</label>
+          <select 
+            id="bookingMethod"
+            bind:value={formData.bookingMethod}
+            class="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <option value="">Any</option>
+            <option value="phone">Phone</option>
+            <option value="web">Web</option>
+            <option value="none">No booking required</option>
+          </select>
+        </div>
+
+        <!-- Fare type filter -->
+        <div class="space-y-1">
+          <label for="fareType" class="block text-sm font-medium text-gray-700">Fare type</label>
+          <select 
+            id="fareType"
+            bind:value={formData.fareType}
+            class="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <option value="">Any</option>
+            <option value="fixed">Fixed</option>
+            <option value="distance">By distance</option>
+            <option value="zone">By zone</option>
+            <option value="free">Free</option>
+          </select>
+        </div>
+        </CardContent>
+      </Card>
+    {/if}
+
+    <div class="space-y-2">
+      <Button type="submit" class="mt-2 w-full" disabled={loading}>
+        {#if loading}
+          <svg class="animate-spin -ml-1 mr-3 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          Searching...
+        {:else}
+          Submit
+        {/if}
+      </Button>
+    </div>
+  </form>
+{/if} 
