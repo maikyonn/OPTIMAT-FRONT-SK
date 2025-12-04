@@ -1,12 +1,15 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { push } from 'svelte-spa-router';
-  import { fade, fly, scale } from 'svelte/transition';
+  import { fade } from 'svelte/transition';
   import TransportationForm from '../components/TransportationForm.svelte';
+  import ProviderResults from '../components/ProviderResults.svelte';
   import { Map, TileLayer, Marker, Popup, GeoJSON } from 'sveaflet';
   import { PROVIDERS_API_BASE } from '../config';
   import { pingManager, PingTypes, pings, mapFocus, visiblePings } from '../lib/pingManager.js';
   import { serviceZoneManager, ServiceZoneTypes, visibleServiceZones } from '../lib/serviceZoneManager.js';
+  import { Card } from '$lib/components/ui/card';
+  import { ResizablePanel, ResizablePanelGroup, ResizableHandle } from '$lib/components/ui/resizable';
 
   let loading = false;
   let error = null;
@@ -28,12 +31,9 @@
   
   onMount(() => {
     mounted = true;
-    // Show form after a brief delay for animation
     setTimeout(() => {
       showForm = true;
-    }, 500);
-    
-    // Initialize with default San Francisco Bay Area view
+    }, 200);
     pingManager.focusOnCoordinates([37.7749, -122.4194], 10);
   });
 
@@ -244,194 +244,143 @@
 </script>
 
 {#if mounted}
-  <!-- Back Button -->
-  <button
-    class="fixed top-6 left-6 z-50 bg-white/90 backdrop-blur-sm hover:bg-white text-gray-700 p-3 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 border border-gray-200"
-    on:click={goHome}
-    in:fly={{ x: -50, duration: 600, delay: 200 }}
-    aria-label="Go back to home page"
-  >
-    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
-    </svg>
-  </button>
+  <div class="flex flex-col h-screen bg-background text-foreground">
+    <div class="flex-1 overflow-hidden">
+      <ResizablePanelGroup direction="horizontal" class="h-full">
+        <ResizablePanel defaultSize={70} minSize={45} class="relative bg-muted/10">
+          <div class="absolute inset-0" in:fade={{ duration: 400 }}>
+            {#key mapKey}
+              <Map
+                bind:this={mapComponent}
+                options={{
+                  center: mapCenter,
+                  zoom: mapZoom
+                }}
+              >
+                <TileLayer url={'https://tile.openstreetmap.org/{z}/{x}/{y}.png'} />
+                
+                <!-- Service Zones from Service Zone Manager -->
+                {#each $visibleServiceZones as zone (zone.id)}
+                  {#if zone.geoJson}
+                    <GeoJSON
+                      json={zone.geoJson}
+                      options={{
+                        style: () => ({
+                          color: zone.config.color,
+                          weight: zone.config.weight,
+                          opacity: zone.config.opacity,
+                          fillOpacity: zone.config.fillOpacity,
+                          fillColor: zone.config.color,
+                          dashArray: zone.config.dashArray
+                        }),
+                        onEachFeature: (feature, layer) => {
+                          layer.on({
+                            mouseover: (e) => {
+                              const layer = e.target;
+                              layer.setStyle({
+                                weight: zone.config.weight + 1,
+                                opacity: Math.min(zone.config.opacity + 0.2, 1),
+                                fillOpacity: Math.min(zone.config.fillOpacity + 0.2, 0.6)
+                              });
+                              layer.bringToFront();
+                            },
+                            mouseout: (e) => {
+                              const layer = e.target;
+                              layer.setStyle({
+                                weight: zone.config.weight,
+                                opacity: zone.config.opacity,
+                                fillOpacity: zone.config.fillOpacity
+                              });
+                            },
+                            click: () => serviceZoneManager.focusOnServiceZone(zone.id)
+                          });
+                        }
+                      }}
+                    />
+                  {/if}
+                {/each}
 
-  <!-- Fullscreen Map -->
-  <div class="fixed inset-0 z-0" in:fade={{ duration: 800 }}>
-    {#key mapKey}
-      <Map
-        bind:this={mapComponent}
-        options={{
-          center: mapCenter,
-          zoom: mapZoom
-        }}
-      >
-        <TileLayer url={'https://tile.openstreetmap.org/{z}/{x}/{y}.png'} />
-        
-        <!-- Service Zones from Service Zone Manager -->
-        {#each $visibleServiceZones as zone (zone.id)}
-          {#if zone.geoJson}
-            <GeoJSON
-              json={zone.geoJson}
-              options={{
-                style: () => ({
-                  color: zone.config.color,
-                  weight: zone.config.weight,
-                  opacity: zone.config.opacity,
-                  fillOpacity: zone.config.fillOpacity,
-                  fillColor: zone.config.color,
-                  dashArray: zone.config.dashArray
-                }),
-                onEachFeature: (feature, layer) => {
-                  // Enhanced hover effects
-                  layer.on({
-                    mouseover: (e) => {
-                      const layer = e.target;
-                      layer.setStyle({
-                        weight: zone.config.weight + 1,
-                        opacity: Math.min(zone.config.opacity + 0.2, 1),
-                        fillOpacity: Math.min(zone.config.fillOpacity + 0.2, 0.6)
-                      });
-                      layer.bringToFront();
-                    },
-                    mouseout: (e) => {
-                      const layer = e.target;
-                      layer.setStyle({
-                        weight: zone.config.weight,
-                        opacity: zone.config.opacity,
-                        fillOpacity: zone.config.fillOpacity
-                      });
-                    },
-                    click: (e) => {
-                      // Focus on clicked zone
-                      serviceZoneManager.focusOnServiceZone(zone.id);
-                    }
-                  });
-                  
-                  // Enhanced popup with zone information
-                  if (zone.config.popup) {
-                    const popupContent = `
-                      <div class="service-zone-popup">
-                        <div class="zone-popup-header">
-                          <strong>${zone.label}</strong>
-                          <span class="zone-type">${zone.type}</span>
+                <!-- Pings from Ping Manager -->
+                {#each $visiblePings as ping (ping.id)}
+                  <Marker 
+                    latLng={ping.coordinates}
+                    popup={ping.description || ping.label}
+                    options={{
+                      title: ping.label,
+                      zIndexOffset: ping.config.zIndex || 0
+                    }}
+                  >
+                    <Popup>
+                      <div class="ping-popup">
+                        <div class="ping-popup-header">
+                          <span class="ping-icon">{ping.config.icon}</span>
+                          <strong>{ping.label}</strong>
                         </div>
-                        ${zone.description ? `<div class="zone-popup-description">${zone.description}</div>` : ''}
-                        ${zone.metadata?.provider?.provider_org ? `<div class="zone-popup-org">🏢 ${zone.metadata.provider.provider_org}</div>` : ''}
-                        ${(() => {
-                          const eligRaw = zone.metadata?.provider?.eligibility_reqs;
-                          let eligList = eligRaw;
-                          if (eligRaw && !Array.isArray(eligRaw) && typeof eligRaw === 'object' && Array.isArray(eligRaw.eligibility_reqs)) {
-                            eligList = eligRaw.eligibility_reqs;
-                          }
-                          if (eligList && !Array.isArray(eligList)) eligList = [String(eligList)];
-                          return eligList && eligList.length
-                            ? `<div class="zone-popup-eligibility">📋 ${eligList.join(', ')}</div>`
-                            : '';
-                        })()}
+                        {#if ping.description}
+                          <div class="ping-popup-description">
+                            {ping.description}
+                          </div>
+                        {/if}
+                        {#if ping.metadata?.address}
+                          <div class="ping-popup-address">
+                            📍 {ping.metadata.address}
+                          </div>
+                        {/if}
+                        {#if ping.metadata?.provider}
+                          <div class="ping-popup-provider">
+                            🚌 {ping.metadata.provider.provider_type}
+                          </div>
+                        {/if}
                       </div>
-                    `;
-                    layer.bindPopup(popupContent);
-                  }
-                }
-              }}
-            />
-          {/if}
-        {/each}
+                    </Popup>
+                  </Marker>
+                {/each}
+              </Map>
+            {/key}
+          </div>
+        </ResizablePanel>
 
-        <!-- Pings from Ping Manager -->
-        {#each $visiblePings as ping (ping.id)}
-          <Marker 
-            latLng={ping.coordinates}
-            popup={ping.description || ping.label}
-            options={{
-              title: ping.label,
-              zIndexOffset: ping.config.zIndex || 0
-            }}
-          >
-            <!-- Custom popup content -->
-            <Popup>
-              <div class="ping-popup">
-                <div class="ping-popup-header">
-                  <span class="ping-icon">{ping.config.icon}</span>
-                  <strong>{ping.label}</strong>
-                </div>
-                {#if ping.description}
-                  <div class="ping-popup-description">
-                    {ping.description}
-                  </div>
-                {/if}
-                {#if ping.metadata?.address}
-                  <div class="ping-popup-address">
-                    📍 {ping.metadata.address}
-                  </div>
-                {/if}
-                {#if ping.metadata?.provider}
-                  <div class="ping-popup-provider">
-                    🚌 {ping.metadata.provider.provider_type}
-                  </div>
-                {/if}
-              </div>
-            </Popup>
-          </Marker>
-        {/each}
-      </Map>
-    {/key}
-  </div>
+        <ResizableHandle withHandle class="border-border bg-border/40" />
 
-  <!-- Floating Form Container -->
-  {#if showForm}
-    <div 
-      class="fixed top-6 right-6 z-40 w-96 max-h-[calc(100vh-3rem)] overflow-y-auto"
-      in:fly={{ x: 50, duration: 600, delay: 300 }}
-    >
-      <div class="bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl border border-gray-200">
-        {#if formPosition === 'form'}
-          <div class="p-6" in:scale={{ duration: 400 }}>
-            <div class="flex items-center justify-between mb-6">
-              <h2 class="text-2xl font-bold text-gray-900">Find Providers</h2>
+        <ResizablePanel defaultSize={30} minSize={25} class="h-full overflow-y-auto border-l border-border/60 bg-card">
+          <div class="p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <button
+                class="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
+                on:click={goHome}
+              >
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+                </svg>
+                Back
+              </button>
               {#if loading}
-                <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-600"></div>
+                <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
               {/if}
             </div>
-            
-            <TransportationForm 
-              {loading}
-              {error}
-              {responseData}
-              on:submit={handleFormSubmit}
-              on:originUpdate={handleOriginAddressUpdate}
-              on:destinationUpdate={handleDestinationAddressUpdate}
-              on:focusProvider={handleFocusProvider}
-            />
+            <Card class="shadow-none border-border/60">
+              <div class="p-4">
+                <TransportationForm 
+                  {loading}
+                  {error}
+                  {responseData}
+                  on:submit={handleFormSubmit}
+                  on:originUpdate={handleOriginAddressUpdate}
+                  on:destinationUpdate={handleDestinationAddressUpdate}
+                  on:focusProvider={handleFocusProvider}
+                />
+              </div>
+            </Card>
           </div>
-        {:else if formPosition === 'results'}
-          <div class="p-6" in:scale={{ duration: 400 }}>
-            <div class="flex items-center justify-between mb-6">
-              <h2 class="text-2xl font-bold text-gray-900">Available Providers</h2>
-              <button
-                class="text-indigo-600 hover:text-indigo-700 font-medium"
-                on:click={handleReturnToForm}
-              >
-                New Search
-              </button>
-            </div>
-            
-            <TransportationForm 
-              {loading}
-              {error}
-              {responseData}
-              on:submit={handleFormSubmit}
-              on:originUpdate={handleOriginAddressUpdate}
-              on:destinationUpdate={handleDestinationAddressUpdate}
-              on:focusProvider={handleFocusProvider}
-            />
-          </div>
-        {/if}
-      </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
-  {/if}
 
+    <!-- Bottom provider results -->
+    <div class="border-t border-border/60 bg-card/90 backdrop-blur px-4 py-3">
+      <ProviderResults {responseData} on:focusProvider={handleFocusProvider} />
+    </div>
+  </div>
 {/if}
 
 <style>
