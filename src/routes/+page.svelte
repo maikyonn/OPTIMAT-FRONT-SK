@@ -1,9 +1,5 @@
 export const ssr = false;
 
-<script lang="ts" context="module">
-  export const ssr = false;
-</script>
-
 <script lang="ts">
   import App from '../App.svelte';
 </script>
