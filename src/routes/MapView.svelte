@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { push } from 'svelte-spa-router';
+  import { goto } from '$app/navigation';
   import { fade } from 'svelte/transition';
   import TransportationForm from '../components/TransportationForm.svelte';
   import ProviderResults from '../components/ProviderResults.svelte';
@@ -213,7 +213,7 @@
   }
 
   function goHome() {
-    push('/');
+    goto('/');
   }
 
   function handleReturnToForm() {
