@@ -343,7 +343,7 @@
         <ResizableHandle withHandle class="border-border bg-border/40" />
 
         <ResizablePanel defaultSize={30} minSize={25} class="h-full border-l border-border/60 bg-card">
-          <div class="p-4 space-y-3 h-full overflow-y-auto">
+          <div class="p-4 space-y-3 h-full overflow-hidden">
             <div class="flex items-center justify-between">
               <button
                 class="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
@@ -359,7 +359,7 @@
               {/if}
             </div>
             <Card class="shadow-none border-border/60">
-              <div class="p-4">
+              <div class="p-4 max-h-[calc(100vh-180px)] overflow-y-auto">
                 <TransportationForm 
                   {loading}
                   {error}
