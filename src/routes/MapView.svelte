@@ -1,6 +1,5 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { goto } from '$app/navigation';
   import { fade } from 'svelte/transition';
   import TransportationForm from '../components/TransportationForm.svelte';
   import ProviderResults from '../components/ProviderResults.svelte';
@@ -8,8 +7,8 @@
   import { PROVIDERS_API_BASE } from '../config';
   import { pingManager, PingTypes, pings, mapFocus, visiblePings } from '../lib/pingManager.js';
   import { serviceZoneManager, ServiceZoneTypes, visibleServiceZones } from '../lib/serviceZoneManager.js';
-  import { Card } from '$lib/components/ui/card';
-  import { ResizablePanel, ResizablePanelGroup, ResizableHandle } from '$lib/components/ui/resizable';
+  import * as Resizable from '$lib/components/ui/resizable/index.js';
+  import PageShell from '$lib/components/PageShell.svelte';
 
   let loading = false;
   let error = null;
@@ -131,23 +130,11 @@
     try {
       const apiUrl = `${API_BASE}/providers/filter`;
 
-      // Build the request body with all filter fields
+      // Only send the required addresses to the filter endpoint
       const requestBody = {
         source_address: formData.originAddress,
         destination_address: formData.destinationAddress
       };
-      
-      // Add optional filters only if they have values
-      if (formData.providerType) requestBody.provider_type = formData.providerType;
-      if (formData.routingType) requestBody.routing_type = formData.routingType;
-      if (formData.scheduleType) requestBody.schedule_type = formData.scheduleType;
-      if (formData.planningType) requestBody.planning_type = formData.planningType;
-      if (formData.eligibilityReqContains) requestBody.eligibility_req_contains = formData.eligibilityReqContains;
-      if (formData.providerOrg) requestBody.provider_org = formData.providerOrg;
-      if (formData.providerNameContains) requestBody.provider_name__contains = formData.providerNameContains;
-      if (formData.hasServiceZone !== null) requestBody.has_service_zone = formData.hasServiceZone;
-      if (formData.bookingMethod) requestBody.booking_method = formData.bookingMethod;
-      if (formData.fareType) requestBody.fare_type = formData.fareType;
       
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -212,10 +199,6 @@
     }
   }
 
-  function goHome() {
-    goto('/');
-  }
-
   function handleReturnToForm() {
     responseData = null;
     error = null;
@@ -239,158 +222,175 @@
     const id = provider.id || provider.provider_id;
     serviceZoneManager.focusOnProvider(id);
   }
-
-  // Service zones are now managed by serviceZoneManager
 </script>
 
 {#if mounted}
-  <div class="flex flex-col h-screen bg-background text-foreground">
-    <div class="flex-1 overflow-hidden">
-      <ResizablePanelGroup direction="horizontal" class="h-full">
-        <ResizablePanel defaultSize={70} minSize={45} class="relative bg-muted/10">
-          <div class="absolute inset-0" in:fade={{ duration: 400 }}>
-            {#key mapKey}
-              <Map
-                bind:this={mapComponent}
-                options={{
-                  center: mapCenter,
-                  zoom: mapZoom
-                }}
-              >
-                <TileLayer url={'https://tile.openstreetmap.org/{z}/{x}/{y}.png'} />
-                
-                <!-- Service Zones from Service Zone Manager -->
-                {#each $visibleServiceZones as zone (zone.id)}
-                  {#if zone.geoJson}
-                    <GeoJSON
-                      json={zone.geoJson}
+  <PageShell
+    title="Provider Finder"
+    description="Search and visualize providers with service zones"
+    appMode={true}
+  >
+    <!-- Main horizontal layout: Left (Map + Results) | Right (Form full height) -->
+    <Resizable.PaneGroup direction="horizontal" class="flex-1 h-full">
+      <!-- Left: Nested vertical panels (Map top, Results bottom) -->
+      <Resizable.Pane defaultSize={65} minSize={40} class="relative">
+        <Resizable.PaneGroup direction="vertical" class="h-full">
+          <!-- Top: Map Panel -->
+          <Resizable.Pane defaultSize={responseData ? 60 : 100} minSize={40} class="relative">
+            <div class="absolute inset-0" in:fade={{ duration: 400 }}>
+              {#key mapKey}
+                <Map
+                  bind:this={mapComponent}
+                  options={{
+                    center: mapCenter,
+                    zoom: mapZoom
+                  }}
+                >
+                  <TileLayer url={'https://tile.openstreetmap.org/{z}/{x}/{y}.png'} />
+
+                  <!-- Service Zones from Service Zone Manager -->
+                  {#each $visibleServiceZones as zone (zone.id)}
+                    {#if zone.geoJson}
+                      <GeoJSON
+                        json={zone.geoJson}
+                        options={{
+                          style: () => ({
+                            color: zone.config.color,
+                            weight: zone.config.weight,
+                            opacity: zone.config.opacity,
+                            fillOpacity: zone.config.fillOpacity,
+                            fillColor: zone.config.color,
+                            dashArray: zone.config.dashArray
+                          }),
+                          onEachFeature: (feature, layer) => {
+                            layer.on({
+                              mouseover: (e) => {
+                                const layer = e.target;
+                                layer.setStyle({
+                                  weight: zone.config.weight + 1,
+                                  opacity: Math.min(zone.config.opacity + 0.2, 1),
+                                  fillOpacity: Math.min(zone.config.fillOpacity + 0.2, 0.6)
+                                });
+                                layer.bringToFront();
+                              },
+                              mouseout: (e) => {
+                                const layer = e.target;
+                                layer.setStyle({
+                                  weight: zone.config.weight,
+                                  opacity: zone.config.opacity,
+                                  fillOpacity: zone.config.fillOpacity
+                                });
+                              },
+                              click: () => serviceZoneManager.focusOnServiceZone(zone.id)
+                            });
+                          }
+                        }}
+                      />
+                    {/if}
+                  {/each}
+
+                  <!-- Pings from Ping Manager -->
+                  {#each $visiblePings as ping (ping.id)}
+                    <Marker
+                      latLng={ping.coordinates}
+                      popup={ping.description || ping.label}
                       options={{
-                        style: () => ({
-                          color: zone.config.color,
-                          weight: zone.config.weight,
-                          opacity: zone.config.opacity,
-                          fillOpacity: zone.config.fillOpacity,
-                          fillColor: zone.config.color,
-                          dashArray: zone.config.dashArray
-                        }),
-                        onEachFeature: (feature, layer) => {
-                          layer.on({
-                            mouseover: (e) => {
-                              const layer = e.target;
-                              layer.setStyle({
-                                weight: zone.config.weight + 1,
-                                opacity: Math.min(zone.config.opacity + 0.2, 1),
-                                fillOpacity: Math.min(zone.config.fillOpacity + 0.2, 0.6)
-                              });
-                              layer.bringToFront();
-                            },
-                            mouseout: (e) => {
-                              const layer = e.target;
-                              layer.setStyle({
-                                weight: zone.config.weight,
-                                opacity: zone.config.opacity,
-                                fillOpacity: zone.config.fillOpacity
-                              });
-                            },
-                            click: () => serviceZoneManager.focusOnServiceZone(zone.id)
-                          });
-                        }
+                        title: ping.label,
+                        zIndexOffset: ping.config.zIndex || 0
                       }}
-                    />
-                  {/if}
-                {/each}
-
-                <!-- Pings from Ping Manager -->
-                {#each $visiblePings as ping (ping.id)}
-                  <Marker 
-                    latLng={ping.coordinates}
-                    popup={ping.description || ping.label}
-                    options={{
-                      title: ping.label,
-                      zIndexOffset: ping.config.zIndex || 0
-                    }}
-                  >
-                    <Popup>
-                      <div class="ping-popup">
-                        <div class="ping-popup-header">
-                          <span class="ping-icon">{ping.config.icon}</span>
-                          <strong>{ping.label}</strong>
+                    >
+                      <Popup>
+                        <div class="ping-popup">
+                          <div class="ping-popup-header">
+                            <span class="ping-icon">{ping.config.icon}</span>
+                            <strong>{ping.label}</strong>
+                          </div>
+                          {#if ping.description}
+                            <div class="ping-popup-description">
+                              {ping.description}
+                            </div>
+                          {/if}
+                          {#if ping.metadata?.address}
+                            <div class="ping-popup-address">
+                              📍 {ping.metadata.address}
+                            </div>
+                          {/if}
+                          {#if ping.metadata?.provider}
+                            <div class="ping-popup-provider">
+                              🚌 {ping.metadata.provider.provider_type}
+                            </div>
+                          {/if}
                         </div>
-                        {#if ping.description}
-                          <div class="ping-popup-description">
-                            {ping.description}
-                          </div>
-                        {/if}
-                        {#if ping.metadata?.address}
-                          <div class="ping-popup-address">
-                            📍 {ping.metadata.address}
-                          </div>
-                        {/if}
-                        {#if ping.metadata?.provider}
-                          <div class="ping-popup-provider">
-                            🚌 {ping.metadata.provider.provider_type}
-                          </div>
-                        {/if}
-                      </div>
-                    </Popup>
-                  </Marker>
-                {/each}
-              </Map>
-            {/key}
-          </div>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle class="border-border bg-border/40" />
-
-        <ResizablePanel defaultSize={30} minSize={25} class="h-full border-l border-border/60 bg-card">
-          <div class="p-4 space-y-3 h-full overflow-hidden">
-            <div class="flex items-center justify-between">
-              <button
-                class="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
-                on:click={goHome}
-              >
-                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
-                </svg>
-                Back
-              </button>
-              {#if loading}
-                <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
-              {/if}
+                      </Popup>
+                    </Marker>
+                  {/each}
+                </Map>
+              {/key}
             </div>
-            <Card class="shadow-none border-border/60">
-              <div class="p-4 max-h-[calc(100vh-180px)] overflow-y-auto">
-                <TransportationForm 
-                  {loading}
-                  {error}
-                  {responseData}
-                  on:submit={handleFormSubmit}
-                  on:originUpdate={handleOriginAddressUpdate}
-                  on:destinationUpdate={handleDestinationAddressUpdate}
-                  on:focusProvider={handleFocusProvider}
-                />
-              </div>
-            </Card>
-          </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
-    </div>
+          </Resizable.Pane>
 
-    <!-- Bottom provider results -->
-    <div class="border-t border-border/60 bg-card/90 backdrop-blur px-4 py-3">
-      <ProviderResults {responseData} on:focusProvider={handleFocusProvider} />
-    </div>
-  </div>
+          {#if responseData}
+            <Resizable.Handle withHandle />
+
+            <!-- Bottom: Results Panel -->
+            <Resizable.Pane defaultSize={40} minSize={20} class="flex flex-col overflow-hidden bg-card border-t border-border/40">
+              <!-- Results Header -->
+              <div class="flex-shrink-0 border-b border-border/40 px-3 py-2 bg-muted/30">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Results ({responseData?.data?.length || 0})
+                  </span>
+                  <button
+                    class="text-xs text-muted-foreground hover:text-foreground"
+                    on:click={handleReturnToForm}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+              <!-- Results Content -->
+              <div class="flex-1 overflow-y-auto p-3">
+                <ProviderResults {responseData} on:focusProvider={handleFocusProvider} />
+              </div>
+            </Resizable.Pane>
+          {/if}
+        </Resizable.PaneGroup>
+      </Resizable.Pane>
+
+      <Resizable.Handle withHandle />
+
+      <!-- Right: Form Panel (full height) -->
+      <Resizable.Pane defaultSize={35} minSize={25} class="bg-card border-l border-border/40 flex flex-col overflow-hidden">
+        <!-- Form Header -->
+        <div class="flex-shrink-0 border-b border-border/40 px-3 py-2 bg-muted/30">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Trip Search</span>
+            {#if loading}
+              <div class="animate-spin rounded-full h-3 w-3 border-2 border-primary border-t-transparent"></div>
+            {/if}
+          </div>
+        </div>
+        <!-- Form Content -->
+        <div class="flex-1 overflow-y-auto p-3">
+          <TransportationForm
+            {loading}
+            {error}
+            {responseData}
+            on:submit={handleFormSubmit}
+            on:originUpdate={handleOriginAddressUpdate}
+            on:destinationUpdate={handleDestinationAddressUpdate}
+            on:focusProvider={handleFocusProvider}
+          />
+        </div>
+      </Resizable.Pane>
+    </Resizable.PaneGroup>
+  </PageShell>
 {/if}
 
 <style>
-  :global(body) {
-    overflow: hidden;
-  }
-  
   :global(.leaflet-container) {
-    height: 100vh !important;
-    width: 100vw !important;
+    height: 100% !important;
+    width: 100% !important;
   }
   
   /* Ping popup styling */

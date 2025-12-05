@@ -3,6 +3,20 @@
     import { PROVIDERS_API_BASE, CHAT_API_URL } from '../config';
     import { fade, fly, slide } from 'svelte/transition';
     import { serviceZoneManager } from '../lib/serviceZoneManager.js';
+    import { marked } from 'marked';
+
+    // Configure marked for safe rendering
+    marked.setOptions({
+        breaks: true,
+        gfm: true
+    });
+
+    // Render markdown to HTML
+    function renderMarkdown(content) {
+        if (!content) return '';
+        return marked.parse(content);
+    }
+
     const PROVIDER_API_BASE = PROVIDERS_API_BASE;
     const CHAT_API_BASE = CHAT_API_URL;
     const dispatch = createEventDispatcher();
@@ -54,7 +68,17 @@
     let messages = [
       {
         role: 'ai',
-        content: "Hello! I'm here to help you find paratransit providers. How can I assist you today?",
+        content: `Hello! I'm your OPTIMAT transportation assistant. Here's what I can help you with:
+
+**🔍 Find Providers** - Search for paratransit and transportation providers based on your pickup and drop-off locations
+
+**📍 Address Search** - Look up and validate addresses to ensure accurate provider matching
+
+**📋 Provider Details** - Get detailed information about specific providers including contact info, eligibility, and service hours
+
+**🌐 General Questions** - Answer questions about paratransit services, accessibility requirements, and transportation options
+
+How can I assist you today?`,
         id: 'initial-greeting'
       }
     ];
@@ -85,6 +109,18 @@
     
     // Typewriter effect state
     let typingMessages = new Set(); // Track which messages are currently typing
+
+    // SSE Streaming state
+    let streamingMessage = ''; // Current streaming message content
+    let currentTool = null; // Current tool being executed (name and status)
+    let isStreaming = false; // Whether we're in streaming mode
+
+    // Provider results bottom bar state
+    let latestProviderResults = null; // Most recent provider search results
+    let selectedProvider = null; // Currently selected provider for detail view
+    let detailPanelHeight = 280; // Height of detail panel in pixels
+    let isDetailPanelOpen = false; // Whether detail panel is visible
+    let isResizing = false; // Whether user is resizing the panel
 
     // Debug mode for logging
     const DEBUG_MODE = true;
@@ -185,9 +221,19 @@
         const providerAttachment = attachments.find(att => att.type === 'provider_search');
         if (!providerAttachment || !providerAttachment.data) return null;
         
-        const data = providerAttachment.data;
-        const providers = data.data || [];
-        const publicTransit = data.public_transit;
+        // Normalize provider attachment data (can arrive as JSON string)
+        let data = providerAttachment.data;
+        if (typeof data === 'string') {
+            try {
+                data = JSON.parse(data);
+            } catch (e) {
+                console.warn('Failed to parse provider attachment data', e);
+                return null;
+            }
+        }
+
+        const providers = Array.isArray(data?.data) ? data.data : [];
+        const publicTransit = data?.public_transit;
         
         return {
             count: providers.length,
@@ -196,8 +242,116 @@
             providers: providers.slice(0, 3), // Show first 3
             moreCount: Math.max(0, providers.length - 3),
             hasPublicTransit: publicTransit && publicTransit.routes && publicTransit.routes.length > 0,
-            allProviders: providers // Keep reference to all providers
+            allProviders: providers, // Keep reference to all providers
+            publicTransit: publicTransit
         };
+    }
+
+    // Provider bar functions
+    function updateLatestProviderResults(attachments) {
+        if (!attachments) return;
+        const providerAttachment = attachments.find(att => att.type === 'provider_search');
+        if (providerAttachment && providerAttachment.data) {
+            let data = providerAttachment.data;
+            if (typeof data === 'string') {
+                try { data = JSON.parse(data); } catch (e) { return; }
+            }
+            const providers = Array.isArray(data?.data) ? data.data : [];
+            latestProviderResults = {
+                providers: providers,
+                sourceAddress: data.source_address,
+                destinationAddress: data.destination_address,
+                publicTransit: data.public_transit
+            };
+            // Auto-open detail panel if we have results
+            if (providers.length > 0 && !isDetailPanelOpen) {
+                selectedProvider = providers[0];
+                isDetailPanelOpen = true;
+                // Auto-show first provider's zone
+                showProviderZoneOnMap(providers[0]);
+            }
+        }
+    }
+
+    function selectProvider(provider) {
+        selectedProvider = provider;
+        isDetailPanelOpen = true;
+        showProviderZoneOnMap(provider);
+    }
+
+    function showProviderZoneOnMap(provider) {
+        if (!provider) return;
+        const providerId = provider.provider_id || provider.id;
+        // Hide all other zones first
+        serviceZoneManager.clearAllServiceZones();
+        visibleProviderZones.clear();
+        visibleProviderZones = new Set(visibleProviderZones);
+
+        // Show this provider's zone
+        if (provider.service_zone) {
+            try {
+                const geoJson = typeof provider.service_zone === 'string'
+                    ? JSON.parse(provider.service_zone)
+                    : provider.service_zone;
+
+                serviceZoneManager.addServiceZone({
+                    type: 'provider',
+                    geoJson: geoJson,
+                    label: provider.provider_name,
+                    description: `${provider.provider_name} service area`,
+                    metadata: { providerId: providerId, provider: provider },
+                    config: { color: '#8b5cf6', fillOpacity: 0.15 }
+                }, false);
+
+                visibleProviderZones.add(providerId);
+                visibleProviderZones = new Set(visibleProviderZones);
+            } catch (e) {
+                console.error('Error parsing provider service zone:', e);
+            }
+        }
+    }
+
+    function closeDetailPanel() {
+        isDetailPanelOpen = false;
+        selectedProvider = null;
+        // Clear service zones when closing
+        serviceZoneManager.clearAllServiceZones();
+        visibleProviderZones.clear();
+        visibleProviderZones = new Set(visibleProviderZones);
+    }
+
+    function startResize(e) {
+        isResizing = true;
+        const startY = e.clientY;
+        const startHeight = detailPanelHeight;
+
+        function onMouseMove(e) {
+            const delta = startY - e.clientY;
+            detailPanelHeight = Math.max(150, Math.min(500, startHeight + delta));
+        }
+
+        function onMouseUp() {
+            isResizing = false;
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+        }
+
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+    }
+
+    function getProviderTypeIcon(type) {
+        if (type?.includes('paratransit') || type?.includes('ADA')) return '♿';
+        if (type?.includes('fix') || type?.includes('fixed')) return '🚌';
+        if (type?.includes('dial') || type?.includes('demand')) return '📞';
+        return '🚐';
+    }
+
+    function getProviderTypeColor(type) {
+        if (type?.includes('paratransit') || type?.includes('ADA')) return 'bg-purple-100 text-purple-700 border-purple-200';
+        if (type?.includes('fix') || type?.includes('fixed')) return 'bg-blue-100 text-blue-700 border-blue-200';
+        if (type?.includes('dial') || type?.includes('demand')) return 'bg-green-100 text-green-700 border-green-200';
+        return 'bg-gray-100 text-gray-700 border-gray-200';
     }
 
     // Service zone management functions
@@ -310,20 +464,35 @@
             // Handle provider attachments - always allow (original behavior)
             const providerAttachment = attachments.find(att => att.type === 'provider_search');
             if (providerAttachment && providerAttachment.data) {
+                // Normalize provider payload (may arrive as JSON string or nested data)
+                let providerPayload = providerAttachment.data;
+                if (typeof providerPayload === 'string') {
+                    try {
+                        providerPayload = JSON.parse(providerPayload);
+                    } catch (e) {
+                        console.warn('Failed to parse provider attachment payload', e);
+                        providerPayload = null;
+                    }
+                }
+                if (providerPayload && providerPayload.data && !Array.isArray(providerPayload.data) && Array.isArray(providerPayload.data.data)) {
+                    providerPayload = { ...providerPayload, data: providerPayload.data.data };
+                }
+                if (!providerPayload) return;
+                
                 // Clear existing service zones when showing new provider results
                 serviceZoneManager.clearAllServiceZones();
                 visibleProviderZones.clear();
                 loadingProviderZones.clear();
                 
                 // Process provider data and add to service zone manager
-                const providerData = providerAttachment.data;
-                if (providerData.data && providerData.data.length > 0) {
+                const providerData = providerPayload;
+                if (Array.isArray(providerData.data) && providerData.data.length > 0) {
                     // Add all provider service zones to the manager (but don't focus yet)
                     serviceZoneManager.addProviderServiceZones(providerData.data, false);
                 }
                 
                 // Emit provider data for the popup
-                dispatch('providersFound', providerAttachment.data);
+                dispatch('providersFound', providerData);
             }
             
             // Handle address attachments - only for recent messages to show location on map
@@ -423,83 +592,137 @@
         }
         return;
       }
-  
+
       loading = true;
+      isStreaming = true;
+      streamingMessage = '';
+      currentTool = null;
       error = null;
-  
+
       const newMessage = {
         role: 'human',
         content: userInput,
         id: `human-${Date.now()}`
       };
-  
+
       messages = [...messages, newMessage];
-      userInput = ''; // Clear input immediately
+      userInput = '';
       scrollToBottom();
-  
+
+      // Create placeholder for streaming AI response
+      const streamingMessageId = `streaming-${Date.now()}`;
+      let pendingAttachments = [];
+
       try {
-                const response = await fetch(`${CHAT_API_BASE}/enhanced`, {
+        const response = await fetch(`${CHAT_API_BASE}/stream`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             new_message: newMessage,
-            conversation_id: conversationId 
+            conversation_id: conversationId
           })
         });
-  
+
         if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ detail: "Failed to send message." }));
-            throw new Error(errorData.detail || `Server error: ${response.status}`);
+          throw new Error(`Server error: ${response.status}`);
         }
-  
-        const fullResponse = await response.json();
-        
-        // Debug logging
-        debugLogChatResponse(fullResponse);
-        
-        if (fullResponse.messages) {
-          const validMessages = fullResponse.messages.filter(m => 
-            (m.role === 'ai' || m.role === 'human') && 
-            typeof m.content === 'string' && 
-            m.content.trim() !== ''
-          ).map((m, i) => ({
-            ...m,
-            id: m.id || `response-${Date.now()}-${i}`
-          }));
-          
-          // Handle attachments - always process for the latest message
-          if (validMessages.length > 0) {
-            const latestMessageId = validMessages[validMessages.length - 1].id;
-            if (fullResponse.attachments && fullResponse.attachments.length > 0) {
-              // Set attachments for the new message
-              messageAttachments.set(latestMessageId, fullResponse.attachments);
-              
-              // Auto-click "View Details" for provider search attachments
-              const hasProviderAttachment = fullResponse.attachments.some(att => att.type === 'provider_search');
-              if (hasProviderAttachment) {
-                // Use setTimeout to ensure the DOM is updated before triggering the click
-                setTimeout(() => {
-                  handleMessageClick(latestMessageId);
-                }, 100);
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const event = JSON.parse(line.slice(6));
+
+                switch (event.event) {
+                  case 'tool_start':
+                    // Clear previous streaming text and show new tool
+                    streamingMessage = '';
+                    currentTool = { name: event.tool, status: 'running' };
+                    scrollToBottom();
+                    break;
+
+                  case 'tool_end':
+                    // Mark tool as done, it will be hidden when streaming resumes
+                    if (currentTool && currentTool.name === event.tool) {
+                      currentTool = { ...currentTool, status: 'done' };
+                    }
+                    break;
+
+                  case 'token':
+                    // Hide tool indicator when text starts streaming
+                    if (currentTool && currentTool.status === 'done') {
+                      currentTool = null;
+                    }
+                    streamingMessage += event.content;
+                    scrollToBottom();
+                    break;
+
+                  case 'message':
+                    // Final message received
+                    streamingMessage = event.content;
+                    break;
+
+                  case 'done':
+                    pendingAttachments = event.attachments || [];
+                    break;
+
+                  case 'error':
+                    error = event.message;
+                    break;
+                }
+              } catch (e) {
+                console.warn('Failed to parse SSE event:', line, e);
               }
-            } else {
-              // Ensure no attachments are associated with this message
-              messageAttachments.delete(latestMessageId);
             }
-            messageAttachments = messageAttachments; // Trigger reactivity
           }
-          
-          messages = [...messages, ...validMessages];
-          scrollToBottom();
         }
+
+        // Add final message
+        if (streamingMessage.trim()) {
+          const finalMessage = {
+            role: 'ai',
+            content: streamingMessage,
+            id: streamingMessageId
+          };
+          messages = [...messages, finalMessage];
+
+          // Handle attachments
+          if (pendingAttachments.length > 0) {
+            messageAttachments.set(streamingMessageId, pendingAttachments);
+            messageAttachments = messageAttachments;
+
+            // Update the bottom provider bar with latest results
+            updateLatestProviderResults(pendingAttachments);
+
+            // Auto-open provider results in popup
+            const hasProviderAttachment = pendingAttachments.some(att => att.type === 'provider_search');
+            if (hasProviderAttachment) {
+              setTimeout(() => handleMessageClick(streamingMessageId), 100);
+            }
+          }
+        }
+
+        scrollToBottom();
+
       } catch (e) {
         error = e.message;
-        // Optionally, add the user's message back to input if sending failed
-        // userInput = newMessage.content; 
+        console.error('SSE error:', e);
       } finally {
         loading = false;
+        isStreaming = false;
+        streamingMessage = '';
+        currentTool = null;
       }
     }
 
@@ -666,7 +889,17 @@
       conversationId = null;
       messages = [{
         role: 'ai',
-        content: "Hello! I'm here to help you find paratransit providers. How can I assist you today?",
+        content: `Hello! I'm your OPTIMAT transportation assistant. Here's what I can help you with:
+
+**🔍 Find Providers** - Search for paratransit and transportation providers based on your pickup and drop-off locations
+
+**📍 Address Search** - Look up and validate addresses to ensure accurate provider matching
+
+**📋 Provider Details** - Get detailed information about specific providers including contact info, eligibility, and service hours
+
+**🌐 General Questions** - Answer questions about paratransit services, accessibility requirements, and transportation options
+
+How can I assist you today?`,
         id: 'new-conversation-greeting'
       }];
       
@@ -778,392 +1011,205 @@
     }
 
 </script> 
-  <div class="flex flex-col h-full">
-    {#if !serverOnline}
-      <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-4">
-        <div class="flex">
-          <div class="flex-shrink-0">
-            <!-- You can add a warning icon here if desired -->
+  <div class="flex flex-col h-full bg-background">
+    <!-- Top status bar -->
+    {#if !serverOnline || isViewingExample}
+      <div class="flex-shrink-0 border-b border-border/40 px-3 py-2 bg-muted/30">
+        {#if !serverOnline}
+          <div class="flex items-center gap-2">
+            <div class="w-2 h-2 rounded-full bg-destructive"></div>
+            <span class="text-xs text-muted-foreground">Chat server offline</span>
           </div>
-          <div class="ml-3">
-            <p class="text-sm text-yellow-700">
-              Chat is currently unavailable. The server appears to be offline.
-            </p>
+        {:else if isViewingExample}
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-muted-foreground">📖 Viewing Example</span>
+            </div>
+            <button
+              on:click={startNewConversation}
+              class="text-xs text-primary hover:text-primary/80 transition"
+            >
+              New Chat
+            </button>
           </div>
-        </div>
-      </div>
-    {/if}
-
-    <!-- Example viewing banner or Save as Example Button -->
-    {#if isViewingExample}
-      <div class="px-4 pt-2 pb-0 flex justify-between items-center bg-blue-50 mx-4 rounded-lg p-2">
-        <div class="flex items-center space-x-2">
-          <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
-          </svg>
-          <span class="text-sm text-blue-700 font-medium">Viewing Example</span>
-        </div>
-        <button
-          on:click={startNewConversation}
-          class="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-        >
-          Start New Chat
-        </button>
-      </div>
-    {:else if conversationId && messages.length > 1 && serverOnline}
-      <div class="px-4 pt-2 pb-0 flex justify-end">
-        <button
-          on:click={openExampleForm}
-          disabled={savingAsExample}
-          class="text-sm px-3 py-1 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-md transition-all duration-200 flex items-center space-x-1"
-          title="Save this conversation as an example for others"
-        >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
-          </svg>
-          <span>Save as Example</span>
-        </button>
+        {/if}
       </div>
     {/if}
   
     <!-- Chat messages -->
-    <div class="flex-1 overflow-y-auto px-4 pt-4 pb-0 space-y-4 chat-messages scroll-smooth">
+    <div class="flex-1 overflow-y-auto px-3 py-3 space-y-3 chat-messages scroll-smooth">
       {#each messages.filter(m => (m.role === 'ai' || m.role === 'human') && typeof m.content === 'string' && m.content.trim() !== '') as message, index (message.id || `${message.role}-${index}-${message.content.substring(0, 20)}`)}
-        <div 
-          class="flex flex-col {message.role === 'human' ? 'items-end' : 'items-start'}"
-          in:fly={{ 
-            x: message.role === 'human' ? 30 : -30, 
-            y: 10,
-            duration: 500,
+        <div
+          class="flex gap-2 {message.role === 'human' ? 'justify-end' : 'justify-start'}"
+          in:fly={{
+            x: message.role === 'human' ? 20 : -20,
+            y: 0,
+            duration: 300,
             delay: 0
           }}
         >
-          <div class="max-w-[80%] rounded-lg p-3 {
+          {#if message.role === 'ai'}
+            <div class="flex-shrink-0 w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center text-xs">
+              🤖
+            </div>
+          {/if}
+
+          <div class="max-w-[75%] {
             message.role === 'human'
-              ? 'bg-indigo-600 text-white'
-              : 'bg-gray-100 text-gray-900'
+              ? 'bg-primary text-primary-foreground rounded-2xl rounded-tr-sm px-3 py-2'
+              : 'bg-muted text-foreground rounded-2xl rounded-tl-sm px-3 py-2'
           }">
-            {#if message.role === 'human' && !isViewingExample}
-              <!-- User messages in live chat: no typing animation -->
-              <p class="whitespace-pre-wrap">{message.content}</p>
+            {#if message.role === 'human'}
+              <p class="text-sm whitespace-pre-wrap">{message.content}</p>
             {:else}
-              <!-- AI messages and all messages in examples: typing animation -->
-              <p 
-                class="whitespace-pre-wrap inline"
-                use:typewriterAction={{ 
-                  text: message.content, 
-                  maxDuration: 2000, 
-                  messageId: message.id 
-                }}
-              ></p>
-              {#if typingMessages.has(message.id)}
-                <span class="typing-cursor">|</span>
-              {/if}
+              <!-- AI message with markdown rendering -->
+              <div class="text-sm chat-markdown">
+                {@html renderMarkdown(message.content)}
+              </div>
             {/if}
           </div>
-          <span class="text-xs text-gray-500 mt-1 opacity-60">
-            {message.role}
-          </span>
-        </div>
-        
-        <!-- Separate attachment display (appears as independent message) -->
-        {#if hasAttachments(message.id)}
-          {@const isRecentMessage = !isViewingExample && messages.findIndex(m => m.id === message.id) >= messages.length - 3}
-          {@const hasProviderAttachment = getProviderSummary(message.id) !== null}
-          {@const hasAddressAttachment = getAddressSummary(message.id) !== null}
-          {@const shouldBeClickable = hasProviderAttachment || (hasAddressAttachment && isRecentMessage)}
-          <div class="flex flex-col items-start mt-2"
-               in:fly={{ x: -30, y: 10, duration: 500, delay: 200 }}>
-            
-            <!-- Attachment display with clickable action text -->
-            <div class="max-w-[85%] rounded-lg shadow-md {shouldBeClickable ? '' : 'opacity-75'}">
-            
-            {#if getProviderSummary(message.id)}
-                {@const summary = getProviderSummary(message.id)}
-                <div class="bg-gradient-to-br from-green-50 via-emerald-50 to-blue-50 border-2 border-green-200 rounded-lg p-4">
-                  <div class="flex items-center gap-3 mb-3">
-                    <div class="bg-green-100 p-2 rounded-full">
-                      <svg class="w-6 h-6 text-green-600" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    </div>
-                    <div>
-                      <div class="text-base font-bold text-green-800">
-                        Found {summary.count} Transportation {summary.count === 1 ? 'Provider' : 'Providers'}
-                      </div>
-                      <div class="text-sm text-green-600">Ready for booking</div>
-                    </div>
-                  </div>
-                  
-                  <div class="bg-white bg-opacity-70 rounded-md p-3 mb-3">
-                    <div class="text-sm text-gray-700">
-                      <div class="flex items-center gap-2 mb-1">
-                        <svg class="w-4 h-4 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
-                          <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.293l-3-3a1 1 0 00-1.414 0l-3 3a1 1 0 001.414 1.414L9 9.414V13a1 1 0 102 0V9.414l1.293 1.293a1 1 0 001.414-1.414z" clip-rule="evenodd" />
-                        </svg>
-                        <span class="font-medium">From:</span> {summary.sourceAddress}
-                      </div>
-                      <div class="flex items-center gap-2">
-                        <svg class="w-4 h-4 text-red-500" fill="currentColor" viewBox="0 0 20 20">
-                          <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.293l-3-3a1 1 0 00-1.414 0l-3 3a1 1 0 001.414 1.414L9 9.414V13a1 1 0 102 0V9.414l1.293 1.293a1 1 0 001.414-1.414z" clip-rule="evenodd" transform="rotate(180 10 10)" />
-                        </svg>
-                        <span class="font-medium">To:</span> {summary.destinationAddress}
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div class="space-y-2 mb-3">
-                    {#each summary.providers as provider, index (provider.provider_id || index)}
-                      <div class="flex items-center gap-3 text-sm bg-white bg-opacity-50 rounded-md p-2">
-                        <div class="w-3 h-3 bg-blue-500 rounded-full flex-shrink-0"></div>
-                        <div class="flex-1">
-                          <span class="font-medium text-gray-800">{provider.provider_name}</span>
-                          <span class="text-gray-500 ml-2">({provider.provider_type})</span>
-                        </div>
-                        <!-- Service Zone Button for Individual Providers -->
-                          <button
-                            class="text-xs px-2 py-1 rounded-md font-medium transition-colors {
-                              isProviderZoneVisible(provider.provider_id || provider.id)
-                                ? 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
-                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                            }"
-                            on:click|stopPropagation={() => toggleProviderServiceZone(
-                              provider.provider_id || provider.id, 
-                              provider.provider_name, 
-                              provider
-                            )}
-                            disabled={isProviderZoneLoading(provider.provider_id || provider.id)}
-                            title="{isProviderZoneVisible(provider.provider_id || provider.id) ? 'Hide' : 'Show'} service zone"
-                          >
-                            {#if isProviderZoneLoading(provider.provider_id || provider.id)}
-                              <div class="animate-spin rounded-full h-3 w-3 border-b-2 border-current"></div>
-                            {:else if isProviderZoneVisible(provider.provider_id || provider.id)}
-                              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21"/>
-                              </svg>
-                            {:else}
-                              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
-                              </svg>
-                            {/if}
-                          </button>
-                      </div>
-                    {/each}
-                    {#if summary.moreCount > 0}
-                      <div class="text-sm font-medium text-blue-600 bg-blue-50 rounded-md p-2 text-center">
-                        ...and {summary.moreCount} more provider{summary.moreCount === 1 ? '' : 's'}
-                      </div>
-                    {/if}
-                  </div>
-                  
-                  {#if summary.hasPublicTransit}
-                    <div class="flex items-center gap-2 mb-3 p-2 bg-blue-50 rounded-md">
-                      <svg class="w-5 h-5 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3z" />
-                      </svg>
-                      <span class="text-sm text-blue-700 font-medium">Public transit routes available</span>
-                    </div>
-                  {/if}
-                  
-                  <div class="flex items-center justify-between pt-3 border-t border-green-200">
-                    <div class="flex items-center gap-2">
-                      <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                      <span class="text-sm text-gray-600">Book 1-3 days in advance</span>
-                    </div>
-                    <button 
-                      class="flex items-center gap-1 text-green-700 hover:text-green-800 hover:bg-green-50 px-2 py-1 rounded transition-colors cursor-pointer"
-                      on:click={() => handleMessageClick(message.id)}
-                      aria-label="View provider details"
-                    >
-                      <span class="text-sm font-medium">View Details</span>
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-              {:else if getAddressSummary(message.id)}
-                {@const addressSummary = getAddressSummary(message.id)}
-                <div class="bg-gradient-to-r from-purple-50 to-blue-50 border-2 border-purple-200 rounded-lg p-4">
-                  <div class="flex items-center gap-3 mb-3">
-                    <div class="bg-purple-100 p-2 rounded-full">
-                      <svg class="w-6 h-6 text-purple-600" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd" />
-                      </svg>
-                    </div>
-                    <div>
-                      <div class="text-base font-bold text-purple-800">Address Located</div>
-                      <div class="text-sm text-purple-600">Ready to use</div>
-                    </div>
-                  </div>
-                  
-                  <div class="bg-white bg-opacity-70 rounded-md p-3 mb-3">
-                    <div class="text-sm text-gray-700 font-medium">
-                      {addressSummary.address}
-                    </div>
-                    {#if addressSummary.name}
-                      <div class="text-xs text-gray-500 mt-1">
-                        {addressSummary.name}
-                      </div>
-                    {/if}
-                  </div>
-                  
-                  <div class="flex items-center justify-between">
-                    <span class="text-sm text-gray-600">{isRecentMessage ? 'Click to show on map' : 'Address from previous search'}</span>
-                    {#if isRecentMessage}
-                      <button 
-                        class="flex items-center gap-1 text-purple-700 hover:text-purple-800 hover:bg-purple-50 px-2 py-1 rounded transition-colors cursor-pointer"
-                        on:click={() => handleMessageClick(message.id)}
-                        aria-label="Show address location on map"
-                      >
-                        <span class="text-sm font-medium">Show Location</span>
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                        </svg>
-                      </button>
-                    {:else}
-                      <div class="flex items-center gap-1 text-gray-500">
-                        <span class="text-sm italic">Previous Address</span>
-                        <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                      </div>
-                    {/if}
-                  </div>
-                </div>
-              {:else}
-                <!-- Fallback for other attachment types -->
-                <div class="bg-gradient-to-r from-gray-50 to-blue-50 border-2 border-gray-200 rounded-lg p-4">
-                  <div class="flex items-center gap-3 mb-3">
-                    <div class="bg-blue-100 p-2 rounded-full">
-                      <svg class="w-6 h-6 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
-                      </svg>
-                    </div>
-                    <div>
-                      <div class="text-base font-bold text-blue-800">
-                        {getAttachmentCount(message.id)} {getAttachmentCount(message.id) === 1 ? 'Attachment' : 'Attachments'}
-                      </div>
-                      <div class="text-sm text-blue-600">Click to view</div>
-                    </div>
-                  </div>
-                  
-                  <div class="bg-white bg-opacity-70 rounded-md p-3 mb-3">
-                    <div class="text-sm text-gray-700">
-                      {getAttachmentTypes(message.id).join(', ')}
-                    </div>
-                  </div>
-                  
-                  <div class="flex items-center justify-between">
-                    <span class="text-sm text-gray-600">Click to reopen attachments</span>
-                    {#if shouldBeClickable}
-                      <button 
-                        class="flex items-center gap-1 text-blue-700 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded transition-colors cursor-pointer"
-                        on:click={() => handleMessageClick(message.id)}
-                        aria-label="Open attachments"
-                      >
-                        <span class="text-sm font-medium">Open</span>
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-                        </svg>
-                      </button>
-                    {:else}
-                      <div class="flex items-center gap-1 text-gray-500">
-                        <span class="text-sm italic">Previous Result</span>
-                        <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                      </div>
-                    {/if}
-                  </div>
-                </div>
-              {/if}
-              
+
+          {#if message.role === 'human'}
+            <div class="flex-shrink-0 w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center text-xs">
+              👤
             </div>
-          </div>
-        {/if}
+          {/if}
+        </div>
       {/each}
   
-      {#if loading}
-        <div class="flex justify-center" in:fade={{ duration: 300 }}>
-          <div class="animate-pulse text-gray-500 flex items-center space-x-2">
-            <div class="flex space-x-1">
-              <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0ms"></div>
-              <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 150ms"></div>
-              <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 300ms"></div>
-            </div>
-            <span>Thinking</span>
+      {#if loading || isStreaming}
+        <div class="flex gap-2 justify-start" in:fade={{ duration: 300 }}>
+          <div class="flex-shrink-0 w-7 h-7 rounded-full bg-gradient-to-br from-purple-500/20 to-blue-500/20 flex items-center justify-center text-xs thinking-avatar">
+            🧠
+          </div>
+          <div class="thinking-bubble rounded-2xl rounded-tl-sm px-3 py-2 max-w-[75%]">
+            <!-- Show current thought: either tool call or streaming text -->
+            {#if currentTool}
+              <!-- Current tool being executed -->
+              <div class="flex items-center gap-2 text-sm">
+                {#if currentTool.status === 'running'}
+                  <div class="animate-spin rounded-full h-4 w-4 border-2 border-purple-400 border-t-transparent"></div>
+                  <span class="text-purple-600 dark:text-purple-300 font-medium">
+                    {#if currentTool.name === 'search_addresses_from_user_query'}
+                      🔍 Searching for addresses...
+                    {:else if currentTool.name === 'find_providers'}
+                      🚌 Finding transportation providers...
+                    {:else if currentTool.name === 'get_provider_info'}
+                      📋 Looking up provider details...
+                    {:else}
+                      ⚙️ {currentTool.name}...
+                    {/if}
+                  </span>
+                {:else}
+                  <svg class="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                  </svg>
+                  <span class="text-green-600 dark:text-green-400 font-medium">
+                    {#if currentTool.name === 'search_addresses_from_user_query'}
+                      ✓ Found addresses
+                    {:else if currentTool.name === 'find_providers'}
+                      ✓ Found providers
+                    {:else if currentTool.name === 'get_provider_info'}
+                      ✓ Got provider info
+                    {:else}
+                      ✓ {currentTool.name} complete
+                    {/if}
+                  </span>
+                {/if}
+              </div>
+            {:else if streamingMessage}
+              <!-- Streaming AI response -->
+              <div class="text-sm prose prose-sm dark:prose-invert max-w-none chat-markdown">
+                {@html renderMarkdown(streamingMessage)}
+                <span class="typing-cursor inline-block ml-0.5">▊</span>
+              </div>
+            {:else}
+              <!-- Initial thinking indicator -->
+              <div class="flex items-center gap-2">
+                <div class="flex space-x-1">
+                  <div class="w-1.5 h-1.5 bg-purple-500/70 rounded-full animate-bounce" style="animation-delay: 0ms"></div>
+                  <div class="w-1.5 h-1.5 bg-purple-500/70 rounded-full animate-bounce" style="animation-delay: 150ms"></div>
+                  <div class="w-1.5 h-1.5 bg-purple-500/70 rounded-full animate-bounce" style="animation-delay: 300ms"></div>
+                </div>
+                <span class="text-sm text-purple-600 dark:text-purple-300 font-medium">Thinking...</span>
+              </div>
+            {/if}
           </div>
         </div>
       {:else if isLoadingExample}
-        <div class="flex justify-center" in:fade={{ duration: 300 }}>
-          <div class="animate-pulse text-gray-500 flex items-center space-x-2">
-            <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-400"></div>
-            <span>Loading example conversation...</span>
+        <div class="flex gap-2 justify-start" in:fade={{ duration: 300 }}>
+          <div class="flex-shrink-0 w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center">
+            <div class="animate-spin rounded-full h-3 w-3 border-2 border-primary border-t-transparent"></div>
+          </div>
+          <div class="bg-muted rounded-2xl rounded-tl-sm px-3 py-2">
+            <span class="text-sm text-muted-foreground">Loading example...</span>
           </div>
         </div>
       {/if}
-  
+
       {#if error}
-        <div class="bg-red-100 text-red-700 p-3 rounded-lg">
+        <div class="bg-destructive/10 border border-destructive/40 text-destructive p-3 rounded-lg text-sm">
           {error}
         </div>
       {/if}
     </div>
+
     <!-- Input form (hidden during example viewing) -->
     {#if !isViewingExample}
-      <form 
+      <form
         on:submit|preventDefault={handleSubmit}
-        class="border-t p-4 bg-white flex-shrink-0"
+        class="flex-shrink-0 border-t border-border/40 bg-card px-3 py-3"
       >
-        <div class="space-y-3">
+        <div class="flex gap-2">
           <textarea
             bind:value={userInput}
-            placeholder={serverOnline ? "Type your message here... (Press Ctrl+Enter to send)" : "Chat is currently unavailable"}
-            class="w-full h-24 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-500 resize-none"   
+            placeholder={serverOnline ? "Type your message..." : "Chat unavailable"}
+            class="flex-1 resize-none rounded-lg border border-border/60 bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed min-h-[60px] max-h-[120px]"
             disabled={loading || !serverOnline}
             on:keydown={(e) => {
-              if (e.ctrlKey && e.key === 'Enter') {
+              if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 handleSubmit();
               }
             }}
           ></textarea>
-          <div class="flex justify-end">
-            <button
-              type="submit"
-              disabled={loading || !serverOnline || !userInput.trim()}
-              class="px-6 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
-            >
-              {#if loading}
-                <div class="flex items-center space-x-2">
-                  <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                  <span>Sending...</span>
-                </div>
-              {:else}
-                Send Message
-              {/if}
-            </button>
-          </div>
+          <button
+            type="submit"
+            disabled={loading || !serverOnline || !userInput.trim()}
+            class="self-end px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50 disabled:cursor-not-allowed transition text-sm font-medium h-fit"
+          >
+            {#if loading}
+              <div class="flex items-center gap-2">
+                <div class="animate-spin rounded-full h-3 w-3 border-2 border-primary-foreground border-t-transparent"></div>
+                <span>Send</span>
+              </div>
+            {:else}
+              Send
+            {/if}
+          </button>
         </div>
+        {#if serverOnline}
+          <div class="text-[10px] text-muted-foreground mt-1.5 px-1">
+            Enter to send · Shift+Enter for new line
+          </div>
+        {/if}
       </form>
     {:else}
       <!-- Continue button for example viewing -->
-      <div class="border-t p-4 bg-white flex-shrink-0">
+      <div class="flex-shrink-0 border-t border-border/40 bg-card px-3 py-3">
         <div class="flex justify-end">
           {#if currentExampleIndex < totalExampleStates}
             <button
               on:click={continueExamplePlayback}
-              class="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200 flex items-center space-x-2"
+              class="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition text-sm font-medium flex items-center gap-2"
             >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <span>Continue</span>
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
               </svg>
-              <span>Continue</span>
             </button>
           {:else}
-            <div class="text-sm text-gray-500 italic">
+            <div class="text-sm text-muted-foreground italic">
               Example completed
             </div>
           {/if}
@@ -1282,7 +1328,7 @@
     .chat-messages {
       scroll-behavior: smooth;
     }
-    
+
     @keyframes bounce {
       0%, 80%, 100% {
         transform: translateY(0);
@@ -1291,14 +1337,15 @@
         transform: translateY(-10px);
       }
     }
-    
+
     .typing-cursor {
       display: inline-block;
       animation: blink 1s infinite;
       font-weight: bold;
       margin-left: 1px;
+      color: #a855f7;
     }
-    
+
     @keyframes blink {
       0%, 50% {
         opacity: 1;
@@ -1306,5 +1353,165 @@
       51%, 100% {
         opacity: 0;
       }
+    }
+
+    /* Thinking bubble styles */
+    .thinking-bubble {
+      background: linear-gradient(135deg,
+        rgba(168, 85, 247, 0.08) 0%,
+        rgba(59, 130, 246, 0.08) 50%,
+        rgba(168, 85, 247, 0.08) 100%
+      );
+      border: 1px solid rgba(168, 85, 247, 0.25);
+      box-shadow:
+        0 0 15px rgba(168, 85, 247, 0.1),
+        0 0 30px rgba(59, 130, 246, 0.05);
+      animation: thinking-glow 2s ease-in-out infinite;
+    }
+
+    @keyframes thinking-glow {
+      0%, 100% {
+        box-shadow:
+          0 0 15px rgba(168, 85, 247, 0.1),
+          0 0 30px rgba(59, 130, 246, 0.05);
+        border-color: rgba(168, 85, 247, 0.25);
+      }
+      50% {
+        box-shadow:
+          0 0 20px rgba(168, 85, 247, 0.2),
+          0 0 40px rgba(59, 130, 246, 0.1);
+        border-color: rgba(168, 85, 247, 0.4);
+      }
+    }
+
+    .thinking-avatar {
+      animation: thinking-pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes thinking-pulse {
+      0%, 100% {
+        transform: scale(1);
+        opacity: 1;
+      }
+      50% {
+        transform: scale(1.05);
+        opacity: 0.9;
+      }
+    }
+
+    /* Dark mode adjustments for thinking bubble */
+    :global(.dark) .thinking-bubble {
+      background: linear-gradient(135deg,
+        rgba(168, 85, 247, 0.12) 0%,
+        rgba(59, 130, 246, 0.12) 50%,
+        rgba(168, 85, 247, 0.12) 100%
+      );
+      border-color: rgba(168, 85, 247, 0.35);
+    }
+
+    /* Chat markdown styles with better spacing */
+    .chat-markdown {
+      line-height: 1.6;
+    }
+
+    .chat-markdown :global(p) {
+      margin-top: 0.75em;
+      margin-bottom: 0.75em;
+    }
+
+    .chat-markdown :global(p:first-child) {
+      margin-top: 0;
+    }
+
+    .chat-markdown :global(p:last-child) {
+      margin-bottom: 0;
+    }
+
+    .chat-markdown :global(ul),
+    .chat-markdown :global(ol) {
+      margin-top: 0.75em;
+      margin-bottom: 0.75em;
+      padding-left: 1.5em;
+    }
+
+    .chat-markdown :global(li) {
+      margin-top: 0.4em;
+      margin-bottom: 0.4em;
+    }
+
+    .chat-markdown :global(li p) {
+      margin-top: 0.25em;
+      margin-bottom: 0.25em;
+    }
+
+    .chat-markdown :global(strong) {
+      font-weight: 600;
+      color: inherit;
+    }
+
+    .chat-markdown :global(h1),
+    .chat-markdown :global(h2),
+    .chat-markdown :global(h3) {
+      font-weight: 600;
+      margin-top: 1em;
+      margin-bottom: 0.5em;
+      line-height: 1.3;
+    }
+
+    .chat-markdown :global(h1:first-child),
+    .chat-markdown :global(h2:first-child),
+    .chat-markdown :global(h3:first-child) {
+      margin-top: 0;
+    }
+
+    .chat-markdown :global(code) {
+      background: rgba(0, 0, 0, 0.08);
+      padding: 0.15rem 0.35rem;
+      border-radius: 0.25rem;
+      font-size: 0.85em;
+      font-family: ui-monospace, monospace;
+    }
+
+    :global(.dark) .chat-markdown :global(code) {
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    .chat-markdown :global(pre) {
+      background: rgba(0, 0, 0, 0.05);
+      padding: 0.75em 1em;
+      border-radius: 0.5rem;
+      overflow-x: auto;
+      margin: 0.75em 0;
+    }
+
+    :global(.dark) .chat-markdown :global(pre) {
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .chat-markdown :global(a) {
+      color: #3b82f6;
+      text-decoration: underline;
+    }
+
+    .chat-markdown :global(a:hover) {
+      color: #2563eb;
+    }
+
+    .chat-markdown :global(blockquote) {
+      border-left: 3px solid rgba(168, 85, 247, 0.4);
+      padding-left: 1em;
+      margin: 0.75em 0;
+      color: inherit;
+      opacity: 0.9;
+    }
+
+    .chat-markdown :global(hr) {
+      border: none;
+      border-top: 1px solid rgba(0, 0, 0, 0.1);
+      margin: 1em 0;
+    }
+
+    :global(.dark) .chat-markdown :global(hr) {
+      border-top-color: rgba(255, 255, 255, 0.1);
     }
   </style>

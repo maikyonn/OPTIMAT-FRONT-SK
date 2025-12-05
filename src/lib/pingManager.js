@@ -3,6 +3,8 @@
  * Provides centralized management for map markers/pings with extensible types
  */
 
+// @ts-nocheck
+
 import { writable, derived, get } from 'svelte/store';
 import { v4 as uuidv4 } from 'uuid';
 

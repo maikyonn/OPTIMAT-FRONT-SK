@@ -3,6 +3,9 @@
   import { fade } from 'svelte/transition';
   import TripRouteMap from '../components/TripRouteMap.svelte';
   import { buildProvidersApiUrl } from '../config';
+  import PageShell from '$lib/components/PageShell.svelte';
+  import { Button } from '$lib/components/ui/button';
+  import * as Resizable from '$lib/components/ui/resizable/index.js';
 
   const DEFAULT_CENTER = [37.99, -121.85];
   const DEFAULT_ZOOM = 11;
@@ -120,7 +123,6 @@
   }
 
   async function attachGeocodes(rawPairs) {
-    // Rely solely on backend data (route_polyline); no geocoding fallback
     return rawPairs;
   }
 
@@ -217,493 +219,182 @@
     return pts;
   })();
 </script>
-<div class="screen" in:fade={{ duration: 120 }}>
-  <div class="map-bg">
-    {#if loadingPairs && pairs.length === 0}
-      <div class="state overlay">Loading map…</div>
-    {:else if !hasMappable}
-      <div class="state overlay">No mappable trips for this selection.</div>
-    {:else}
-        <TripRouteMap
-          mapKey={mapKey}
-          center={mapCenter}
-          zoom={selectedTrip ? 13 : DEFAULT_ZOOM}
-          overlayMode={viewMode === 'heat' ? 'heat' : 'driving'}
-          overlaySegments={[]}
-          drivingRoutes={drivingRoutes}
-          transitRoutes={[]}
-          routeCoordinates={focusRoute}
-          routeMode={viewMode === 'heat' ? 'selected' : 'selected'}
-          selectedTripId={selectedTripId}
-          heatPoints={heatPoints}
-        />
-      {/if}
-  </div>
 
-  <aside class="panel-stack">
-    <div class="card inner-sidebar">
-      <div class="stack-head">
-        <div>
-          <p class="eyebrow">Trip Records</p>
-          <div class="section-title">Trips</div>
-          <p class="muted small">Select a date, then a trip. Only “All trips” available (backend sends no dates).</p>
-        </div>
-        <div class="view-toggle">
-          <button class:view-active={viewMode === 'routes'} on:click={() => { viewMode = 'routes'; mapKey = `routes-${Date.now()}`; }}>
-            Routes
-          </button>
-          <button class:view-active={viewMode === 'heat'} on:click={() => { viewMode = 'heat'; mapKey = `heat-${Date.now()}`; }}>
-            Heatmap
-          </button>
+<PageShell
+  title="Trip Records CSV"
+  description="Explore uploaded paired trip records with return gaps, hotspots, and time-of-day insights."
+  appMode={true}
+>
+  <!-- Main horizontal layout: Left (Map + Stats) | Right (Trips full height) -->
+  <Resizable.PaneGroup direction="horizontal" class="flex-1 h-full">
+    <!-- Left: Nested vertical panels (Map top, Stats bottom) -->
+    <Resizable.Pane defaultSize={65} minSize={40} class="relative">
+      <Resizable.PaneGroup direction="vertical" class="h-full">
+        <!-- Top: Map Panel -->
+        <Resizable.Pane defaultSize={60} minSize={40} class="relative">
+          <div class="absolute inset-0" in:fade={{ duration: 400 }}>
+            <div class="absolute top-4 left-4 z-10 rounded-xl border border-border/70 bg-background/90 px-4 py-3 shadow">
+              <div class="text-xs uppercase tracking-wide text-muted-foreground">Map view</div>
+              <div class="text-sm font-semibold">
+                {#if loadingPairs && pairs.length === 0}
+                  Loading map…
+                {:else if !hasMappable}
+                  No mappable trips for this selection
+                {:else}
+                  {visibleTrips.length} trips displayed
+                {/if}
+              </div>
+              <div class="mt-2 flex flex-wrap gap-2">
+                <Button size="sm" variant={viewMode === 'routes' ? 'secondary' : 'outline'} on:click={() => { viewMode = 'routes'; mapKey = `routes-${Date.now()}`; }}>Routes</Button>
+                <Button size="sm" variant={viewMode === 'heat' ? 'secondary' : 'outline'} on:click={() => { viewMode = 'heat'; mapKey = `heat-${Date.now()}`; }}>Heatmap</Button>
+              </div>
+            </div>
+            {#if loadingPairs && pairs.length === 0}
+              <div class="flex h-full items-center justify-center text-sm text-muted-foreground">Loading map…</div>
+            {:else if !hasMappable}
+              <div class="flex h-full items-center justify-center text-sm text-muted-foreground">No mappable trips for this selection.</div>
+            {:else}
+              <TripRouteMap
+                mapKey={mapKey}
+                center={mapCenter}
+                zoom={selectedTrip ? 13 : DEFAULT_ZOOM}
+                overlayMode={viewMode === 'heat' ? 'heat' : 'driving'}
+                overlaySegments={[]}
+                drivingRoutes={drivingRoutes}
+                transitRoutes={[]}
+                routeCoordinates={focusRoute}
+                routeMode={viewMode === 'heat' ? 'selected' : 'selected'}
+                selectedTripId={selectedTripId}
+                heatPoints={heatPoints}
+              />
+            {/if}
+          </div>
+        </Resizable.Pane>
+
+        <Resizable.Handle withHandle />
+
+        <!-- Bottom: Stats/Analysis Panel -->
+        <Resizable.Pane defaultSize={40} minSize={20} class="flex flex-col overflow-hidden bg-card border-t border-border/40">
+          <!-- Stats Header -->
+          <div class="flex-shrink-0 border-b border-border/40 px-3 py-2 bg-muted/30">
+            <div class="flex items-center justify-between">
+              <div>
+                <span class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Daily Analysis</span>
+                <p class="text-xs text-muted-foreground">Stats for {formatDateLabel(selectedDate)}</p>
+              </div>
+              <div class="text-xs rounded-full bg-muted px-2 py-1 text-muted-foreground">{stats.tripCount} trips</div>
+            </div>
+          </div>
+          <!-- Stats Content -->
+          <div class="flex-1 overflow-y-auto p-3">
+            <div class="grid grid-cols-2 gap-3">
+              <div class="rounded-lg border border-border/70 bg-card p-3 shadow-sm">
+                <p class="text-xs text-muted-foreground mb-1">Avg distance per trip</p>
+                <div class="text-base font-semibold">{formatNumber(stats.avgDistanceKm, 'km')}</div>
+                <div class="mt-2 space-y-1">
+                  {#each buildBins(stats.distancesKm ?? [], [5, 10, 20, 40]) as bin}
+                    <div class="flex items-center gap-2 text-xs">
+                      <div class="flex-1 h-5 rounded-full bg-muted overflow-hidden">
+                        <div class="h-full bg-primary/60" style={`width:${Math.min(100, (bin.count / Math.max(1, stats.tripCount)) * 100)}%`}></div>
+                      </div>
+                      <span class="text-muted-foreground w-16">{bin.label}</span>
+                      <span class="font-medium w-8 text-right">{bin.count}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+              <div class="rounded-lg border border-border/70 bg-card p-3 shadow-sm">
+                <p class="text-xs text-muted-foreground mb-1">Avg duration per trip</p>
+                <div class="text-base font-semibold">{formatNumber(stats.avgDurationMin, 'min')}</div>
+                <div class="mt-2 space-y-1">
+                  {#each buildBins(stats.durationsMin ?? [], [10, 20, 40, 60]) as bin}
+                    <div class="flex items-center gap-2 text-xs">
+                      <div class="flex-1 h-5 rounded-full bg-muted overflow-hidden">
+                        <div class="h-full bg-primary/60" style={`width:${Math.min(100, (bin.count / Math.max(1, stats.tripCount)) * 100)}%`}></div>
+                      </div>
+                      <span class="text-muted-foreground w-16">{bin.label}</span>
+                      <span class="font-medium w-8 text-right">{bin.count}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+              <div class="rounded-lg border border-border/70 bg-card p-3 shadow-sm">
+                <p class="text-xs text-muted-foreground mb-1">Avg return gap</p>
+                <div class="text-base font-semibold">{formatNumber(stats.avgReturnGapMin, 'min')}</div>
+              </div>
+              <div class="rounded-lg border border-border/70 bg-card p-3 shadow-sm">
+                <p class="text-xs text-muted-foreground mb-1">Earliest pickup</p>
+                <div class="text-base font-semibold">{stats.earliestPickup}</div>
+              </div>
+              <div class="rounded-lg border border-border/70 bg-card p-3 shadow-sm">
+                <p class="text-xs text-muted-foreground mb-1">Latest drop</p>
+                <div class="text-base font-semibold">{stats.latestDrop}</div>
+              </div>
+              <div class="rounded-lg border border-border/70 bg-card p-3 shadow-sm">
+                <p class="text-xs text-muted-foreground mb-1">Passengers moved</p>
+                <div class="text-base font-semibold">{stats.passengers}</div>
+              </div>
+              <div class="col-span-2 rounded-lg border border-border/70 bg-card p-3 shadow-sm">
+                <p class="text-xs text-muted-foreground mb-1">Avg speed (all routed trips)</p>
+                <div class="text-base font-semibold">{formatNumber(stats.avgSpeedMph, 'mph')}</div>
+              </div>
+            </div>
+          </div>
+        </Resizable.Pane>
+      </Resizable.PaneGroup>
+    </Resizable.Pane>
+
+    <Resizable.Handle withHandle />
+
+    <!-- Right: Trips List Panel (full height) -->
+    <Resizable.Pane defaultSize={35} minSize={25} class="bg-card border-l border-border/40 flex flex-col overflow-hidden">
+      <!-- Trips Header -->
+      <div class="flex-shrink-0 border-b border-border/40 px-3 py-2 bg-muted/30">
+        <div class="flex items-center justify-between">
+          <div>
+            <span class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Trip Records</span>
+            <p class="text-xs text-muted-foreground">CSV paired trip records</p>
+          </div>
+          <div class="text-xs rounded-full bg-muted px-2 py-1 text-muted-foreground">{visibleTrips.length} showing</div>
         </div>
       </div>
-
-      <div class="chip">{visibleTrips.length} showing</div>
-
-      <div class="date-row">
-        <button class:selected={true} on:click={() => selectDate('All trips')}>
-          <span class="date-label">All trips</span>
-          <span class="date-meta">{pairs.length} trips</span>
+      <!-- Date Filter (placeholder) -->
+      <div class="flex-shrink-0 px-3 pt-2 pb-1">
+        <button class="w-full flex items-center justify-between rounded-md border border-border bg-secondary px-3 py-2 text-sm font-medium text-foreground" on:click={() => selectDate('All trips')}>
+          <span>All trips</span>
+          <span class="text-xs text-muted-foreground">{pairs.length} trips</span>
         </button>
       </div>
-
-      {#if pairsError}
-        <div class="error">{pairsError}</div>
-      {:else if loadingPairs}
-        <p class="muted">Loading trips…</p>
-      {:else if pairs.length === 0}
-        <p class="muted">No trips loaded.</p>
-      {:else}
-        <ul>
+      <!-- Trips Content -->
+      <div class="flex-1 overflow-y-auto px-3 pb-3 space-y-2">
+        {#if pairsError}
+          <div class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{pairsError}</div>
+        {:else if loadingPairs}
+          <div class="flex flex-col items-center gap-2 text-sm text-muted-foreground">
+            <div class="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+            <p>Loading trips…</p>
+          </div>
+        {:else if pairs.length === 0}
+          <p class="text-sm text-muted-foreground">No trips loaded.</p>
+        {:else}
           {#each pairs as pair (pair.trip_id)}
-            <li>
-              <button
-                class:selected={pair.trip_id === selectedTripId}
-                on:click={() => selectTrip(pair.trip_id)}
-              >
-                <div class="trip-top">
-                  <div class="trip-id">Trip #{pair.trip_id}</div>
-                  <span class="pill">{formatMinutes(pair.duration_minutes)}</span>
-                </div>
-                <div class="route-line">{pair.pickup_city ?? '—'} → {pair.drop_city ?? '—'}</div>
-                <div class="time-line">{formatTime(pair.pick_time)} → {formatTime(pair.drop_time)}</div>
-                <div class="count-line">
-                  {pair.passengers_on_board ?? '—'} pax ·
-                  {formatMinutes(pair.outbound_duration_minutes ?? pair.route_duration_seconds / 60)} travel
-                </div>
-              </button>
-            </li>
+            <button
+              class={`w-full rounded-lg border px-3 py-3 text-left shadow-sm transition hover:border-primary/60 ${pair.trip_id === selectedTripId ? 'border-primary/60 bg-primary/5' : 'border-border/70 bg-card'}`}
+              on:click={() => selectTrip(pair.trip_id)}
+            >
+              <div class="flex items-center justify-between text-sm font-semibold">
+                <div>Trip #{pair.trip_id}</div>
+                <span class="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{formatMinutes(pair.duration_minutes)}</span>
+              </div>
+              <div class="mt-1 text-sm text-muted-foreground">{pair.pickup_city ?? '—'} → {pair.drop_city ?? '—'}</div>
+              <div class="text-xs text-muted-foreground">{formatTime(pair.pick_time)} → {formatTime(pair.drop_time)}</div>
+              <div class="mt-1 text-xs text-muted-foreground">
+                {pair.passengers_on_board ?? '—'} pax · {formatMinutes(pair.outbound_duration_minutes ?? pair.route_duration_seconds / 60)} travel
+              </div>
+            </button>
           {/each}
-        </ul>
-      {/if}
-    </div>
-  </aside>
-
-  <section class="analysis card">
-    <div class="analysis-header">
-      <div>
-        <p class="eyebrow">Daily Analysis</p>
-        <h2>Stats for {formatDateLabel(selectedDate)}</h2>
+        {/if}
       </div>
-      <div class="chip muted">{stats.tripCount} trips analysed</div>
-    </div>
-    <div class="analysis-grid">
-      <article>
-        <p class="label">Avg distance per trip</p>
-        <div class="value">{formatNumber(stats.avgDistanceKm, 'km')}</div>
-        <div class="spark">
-          {#each buildBins(stats.distancesKm ?? [], [5, 10, 20, 40]) as bin}
-            <div class="bar" style={`width:${Math.min(100, (bin.count / Math.max(1, stats.tripCount)) * 100)}%`}>
-              <span class="bar-label">{bin.label}</span>
-              <span class="bar-count">{bin.count}</span>
-            </div>
-          {/each}
-        </div>
-      </article>
-      <article>
-        <p class="label">Avg travel time per trip</p>
-        <div class="value">{formatNumber(stats.avgDurationMin, 'min')}</div>
-        <div class="spark">
-          {#each buildBins(stats.durationsMin ?? [], [10, 20, 40, 80]) as bin}
-            <div class="bar" style={`width:${Math.min(100, (bin.count / Math.max(1, stats.tripCount)) * 100)}%`}>
-              <span class="bar-label">{bin.label}</span>
-              <span class="bar-count">{bin.count}</span>
-            </div>
-          {/each}
-        </div>
-      </article>
-      <article>
-        <p class="label">Avg speed (routed)</p>
-        <div class="value">{formatNumber(stats.avgSpeedMph, 'mph')}</div>
-        <p class="hint">{stats.routedCount} trips with routes</p>
-      </article>
-      <article>
-        <p class="label">Return gap</p>
-        <div class="value">{formatNumber(stats.avgReturnGapMin, 'min')}</div>
-        <p class="hint">Earliest {stats.earliestPickup} · Latest {stats.latestDrop}</p>
-      </article>
-      <article>
-        <p class="label">Passengers</p>
-        <div class="value">{stats.passengers ?? '—'}</div>
-        <p class="hint">Total onboard across trips</p>
-      </article>
-    </div>
-  </section>
-</div>
-
-<style>
-  .screen {
-    position: relative;
-    min-height: 100vh;
-    background: #0f172a;
-    overflow: hidden;
-  }
-
-  .screen :global(body) {
-    margin: 0;
-  }
-
-  .map-bg {
-    position: fixed;
-    inset: 0;
-    z-index: 1;
-  }
-
-  .map-bg :global(.map-container),
-  .map-bg :global(.leaflet-container),
-  .map-bg :global(canvas),
-  .map-bg :global(svg) {
-    width: 100% !important;
-    height: 100% !important;
-  }
-
-  .overlay {
-    z-index: 3;
-  }
-
-  .panel-stack {
-    position: fixed;
-    top: 0;
-    right: 0;
-    width: clamp(320px, 28vw, 420px);
-    z-index: 4;
-    display: flex;
-    flex-direction: column;
-    gap: 0.85rem;
-    max-height: 100vh;
-    overflow: hidden;
-  }
-
-  .panel-stack .card {
-    max-height: 70vh;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .panel-stack ul {
-    overflow: auto;
-  }
-
-  .analysis {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 4;
-    backdrop-filter: blur(6px);
-  }
-
-  .eyebrow {
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-size: 0.75rem;
-    margin: 0;
-    color: #2563eb;
-  }
-
-  .map-header h1 {
-    margin: 0.2rem 0 0.1rem;
-    font-size: 1.6rem;
-  }
-
-  .map-header .lede {
-    margin: 0;
-    color: #475569;
-  }
-
-  .chip {
-    padding: 0.35rem 0.7rem;
-    border-radius: 999px;
-    background: #eef2ff;
-    color: #1e293b;
-    font-weight: 600;
-    border: 1px solid #cbd5e1;
-  }
-
-  .state {
-    padding: 1rem;
-    color: #475569;
-    background: #eef2ff;
-    border-radius: 12px;
-    border: 1px dashed #cbd5e1;
-  }
-
-  .card {
-    background: white;
-    border: 1px solid #e5e7eb;
-    border-radius: 14px;
-    padding: 0.85rem;
-    box-shadow: 0 10px 20px rgba(15, 23, 42, 0.05);
-  }
-
-  .outer-sidebar,
-  .inner-sidebar {
-    display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
-  }
-
-  .stack-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 0.75rem;
-  }
-
-  .view-toggle {
-    display: inline-flex;
-    gap: 0.4rem;
-    background: #e2e8f0;
-    padding: 0.25rem;
-    border-radius: 999px;
-    border: 1px solid #cbd5e1;
-  }
-
-  .view-toggle button {
-    border: none;
-    background: transparent;
-    padding: 0.35rem 0.8rem;
-    border-radius: 999px;
-    cursor: pointer;
-    font-weight: 700;
-    color: #334155;
-  }
-
-  .view-toggle button.view-active {
-    background: #0ea5e9;
-    color: white;
-    box-shadow: 0 6px 18px rgba(14, 165, 233, 0.35);
-  }
-
-  .date-row {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 0.4rem;
-  }
-
-  .muted.small {
-    font-size: 0.85rem;
-    margin: 0.1rem 0 0;
-  }
-
-  .section-title {
-    font-weight: 700;
-    color: #0f172a;
-  }
-
-  .outer-sidebar ul,
-  .inner-sidebar ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-  }
-
-  .outer-sidebar button,
-  .inner-sidebar button {
-    width: 100%;
-    text-align: left;
-    border: 1px solid #e2e8f0;
-    background: #f8fafc;
-    border-radius: 12px;
-    padding: 0.65rem 0.7rem;
-    cursor: pointer;
-    transition: border 120ms ease, transform 120ms ease, box-shadow 120ms ease;
-  }
-
-  .outer-sidebar button:hover,
-  .inner-sidebar button:hover {
-    border-color: #94a3b8;
-    transform: translateY(-1px);
-  }
-
-  .outer-sidebar button.selected,
-  .inner-sidebar button.selected {
-    border-color: #2563eb;
-    background: #eef2ff;
-    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18);
-  }
-
-  .date-label {
-    display: block;
-    font-weight: 700;
-    color: #0f172a;
-  }
-
-  .date-meta {
-    color: #475569;
-    font-size: 0.9rem;
-  }
-
-  .trip-top {
-    display: flex;
-    justify-content: space-between;
-    gap: 0.5rem;
-    align-items: center;
-  }
-
-  .trip-id {
-    font-weight: 700;
-    color: #0f172a;
-  }
-
-  .pill {
-    background: #e2f3ff;
-    color: #0b6cbf;
-    border-radius: 999px;
-    padding: 0.2rem 0.55rem;
-    font-size: 0.85rem;
-    border: 1px solid #cfe8ff;
-  }
-
-  .route-line,
-  .time-line,
-  .count-line {
-    color: #475569;
-    font-size: 0.95rem;
-  }
-
-  .error {
-    color: #b91c1c;
-    background: #fef2f2;
-    border: 1px solid #fecdd3;
-    padding: 0.7rem;
-    border-radius: 12px;
-  }
-
-  .muted {
-    color: #94a3b8;
-  }
-
-  .analysis {
-    padding: 1rem 1.25rem;
-    border-radius: 16px;
-  }
-
-  .analysis.card {
-    border-left: none;
-    border-right: none;
-    border-bottom: none;
-    border-radius: 0;
-  }
-
-  .analysis-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .analysis-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 0.75rem;
-  }
-
-  .analysis-grid article {
-    padding: 0.75rem 0.85rem;
-    border: 1px solid #e2e8f0;
-    border-radius: 12px;
-    background: #f8fafc;
-  }
-
-  .spark {
-    margin-top: 0.4rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-  }
-
-  .bar {
-    position: relative;
-    background: linear-gradient(90deg, #c7d2fe, #93c5fd);
-    border-radius: 10px;
-    min-height: 20px;
-    padding: 0.15rem 0.5rem;
-    display: flex;
-    align-items: center;
-    color: #0f172a;
-    font-weight: 700;
-  }
-
-  .bar-label {
-    font-size: 0.85rem;
-  }
-
-  .bar-count {
-    margin-left: auto;
-    font-size: 0.85rem;
-    color: #1f2937;
-  }
-
-  .label {
-    color: #475569;
-    margin: 0 0 0.15rem;
-    font-size: 0.9rem;
-  }
-
-  .value {
-    font-weight: 800;
-    color: #0f172a;
-    font-size: 1.3rem;
-    margin: 0;
-  }
-
-  .hint {
-    margin: 0.1rem 0 0;
-    color: #6b7280;
-    font-size: 0.9rem;
-  }
-
-  @media (max-width: 1100px) {
-    .panel-stack {
-      position: static;
-      width: 100%;
-      max-height: none;
-      flex-direction: row;
-      gap: 0.75rem;
-      padding: 0;
-      margin-top: 110px;
-      z-index: 3;
-    }
-
-    .panel-stack .card {
-      flex: 1 1 0;
-      max-height: none;
-    }
-
-    .analysis {
-      position: static;
-      margin: 14px 18px 18px;
-    }
-
-    .screen {
-      padding-bottom: 12px;
-    }
-  }
-</style>
+    </Resizable.Pane>
+  </Resizable.PaneGroup>
+</PageShell>

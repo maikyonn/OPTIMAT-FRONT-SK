@@ -12,6 +12,7 @@ export const CHAT_API_URL = (
   (isLocal ? 'http://localhost:8002' : 'https://api-chat.optimat.us')
 ).replace(/\/+$/, '');
 
+/** @param {string | undefined} prefix */
 function normalizePrefix(prefix) {
   const value = (prefix ?? '').trim();
   if (value === '' || value === '/') {
@@ -33,9 +34,13 @@ function defaultProvidersPrefix() {
   return '/api-providers';
 }
 
-export const PROVIDERS_API_PREFIX = normalizePrefix(
-  import.meta.env.VITE_API_PREFIX ?? defaultProvidersPrefix()
-);
+const rawPrefix = import.meta.env.VITE_API_PREFIX;
+const effectivePrefix =
+  rawPrefix === undefined
+    ? defaultProvidersPrefix()
+    : rawPrefix || '/api-providers';
+
+export const PROVIDERS_API_PREFIX = normalizePrefix(effectivePrefix);
 
 export const BACKEND_URL = API_URL;
 export const PROVIDERS_API_BASE = `${API_URL}${PROVIDERS_API_PREFIX}`;

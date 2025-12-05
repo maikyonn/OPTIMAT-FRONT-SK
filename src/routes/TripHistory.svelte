@@ -1,9 +1,11 @@
 <script>
   import { onMount } from 'svelte';
-  import { push } from 'svelte-spa-router';
-  import { fly, fade } from 'svelte/transition';
+  import { fade } from 'svelte/transition';
   import TripRouteMap from '../components/TripRouteMap.svelte';
   import { buildProvidersApiUrl } from '../config';
+  import PageShell from '$lib/components/PageShell.svelte';
+  import { Button } from '$lib/components/ui/button';
+  import * as Resizable from '$lib/components/ui/resizable/index.js';
 
   const DEFAULT_CENTER = [37.989, -121.835];
   const DEFAULT_ZOOM = 11;
@@ -136,10 +138,6 @@
   function maskAddress(address) {
     if (!address) return '';
     return String(address).replace(/\d/g, '•');
-  }
-
-  function goHome() {
-    push('/');
   }
 
   $: tripSegments = trips
@@ -401,839 +399,265 @@
   }
 </script>
 
-<button
-  class="back-button"
-  on:click={goHome}
-  in:fly={{ x: -40, duration: 300 }}
-  aria-label="Go back to home page"
+<PageShell
+  title="Trip History"
+  description="Visualize historic Tri Delta Transit trips with overlays, Google routing, and consistent UI."
+  appMode={true}
 >
-  <svg class="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
-  </svg>
-</button>
-
-<div class="map-container" in:fade={{ duration: 400 }}>
-  {#if trips.length > 0}
-    <div class="map-overlay">
-      <div>
-        <div class="overlay-title">Map view</div>
-        <div class="overlay-value">
-          {#if overlayMode === OVERLAY_SEGMENTS}
-            {mappedTripCount} of {trips.length} trips displayed
-          {:else if overlayLoading}
-            Loading {overlayMode === OVERLAY_DRIVING ? 'driving' : 'transit'} routes…
-          {:else}
-            {(overlayMode === OVERLAY_DRIVING ? drivingRoutes.length : transitRoutes.length) || 0}
-            {overlayMode === OVERLAY_DRIVING ? 'driving' : 'transit'} routes displayed
-          {/if}
-        </div>
-      </div>
-      <div class="overlay-controls">
-        <button
-          type="button"
-          class="overlay-button {overlayMode === OVERLAY_SEGMENTS ? 'active' : ''}"
-          on:click={() => changeOverlayMode(OVERLAY_SEGMENTS)}
-          disabled={overlayLoading}
-          aria-pressed={overlayMode === OVERLAY_SEGMENTS}
-        >
-          Trip Segments
-        </button>
-        <button
-          type="button"
-          class="overlay-button {overlayMode === OVERLAY_DRIVING ? 'active' : ''}"
-          on:click={() => changeOverlayMode(OVERLAY_DRIVING)}
-          disabled={overlayLoading}
-          aria-pressed={overlayMode === OVERLAY_DRIVING}
-        >
-          Driving Routes
-        </button>
-        <button
-          type="button"
-          class="overlay-button {overlayMode === OVERLAY_TRANSIT ? 'active' : ''}"
-          on:click={() => changeOverlayMode(OVERLAY_TRANSIT)}
-          disabled={overlayLoading}
-          aria-pressed={overlayMode === OVERLAY_TRANSIT}
-        >
-          Transit Routes
-        </button>
-      </div>
-      {#if overlayError}
-        <div class="overlay-error">
-          {overlayError}
-        </div>
-      {/if}
-    </div>
-  {/if}
-  <TripRouteMap
-    mapKey={mapKey}
-    center={mapCenter}
-    zoom={mapZoom}
-    overlayMode={overlayMode}
-    overlaySegments={tripSegments}
-    drivingRoutes={drivingRoutes}
-    transitRoutes={transitRoutes}
-    routeCoordinates={routeCoordinates}
-    routeMode={routeMode}
-    selectedTripId={selectedTrip?.trip_id}
-  />
-</div>
-
-<aside
-  class="trips-panel"
-  in:fly={{ x: 40, duration: 400, delay: 100 }}
->
-  <div class="panel-inner">
-    <header class="panel-header">
-      <div>
-        <h2>Tri Delta Transit Trips</h2>
-        <p class="panel-subtitle">Historical rides sourced from Aurora</p>
-      </div>
-      <button class="refresh-button" on:click={loadTrips} disabled={loading}>
-        {#if loading}
-          <span class="spinner" aria-hidden="true"></span>
-        {:else}
-          ↻
-        {/if}
-      </button>
-    </header>
-
-    <div class="panel-content">
-      {#if loading && trips.length === 0}
-        <div class="state">
-          <span class="spinner" aria-hidden="true"></span>
-          <p>Loading trip history…</p>
-        </div>
-      {:else if error}
-        <div class="state error">
-          <p>{error}</p>
-          <button class="retry-button" on:click={loadTrips}>Try again</button>
-        </div>
-      {:else if trips.length === 0}
-        <div class="state">
-          <p>No trip records are available yet.</p>
-        </div>
-      {:else}
-        <p class="trip-count">Showing {trips.length} trips</p>
-        <div class="trip-list">
-          {#each trips as trip (trip.trip_id)}
-            <button
-              class="trip-card {selectedTrip?.trip_id === trip.trip_id ? 'selected' : ''}"
-              on:click={() => selectTrip(trip)}
-            >
-              <div class="trip-id">Trip #{trip.trip_id}</div>
-              <div class="trip-route">
-                <div class="trip-label">Origin</div>
-                <div class="trip-address">{maskAddress(trip.origin_address)}, {trip.origin_city}</div>
-              </div>
-              <div class="trip-route">
-                <div class="trip-label">Destination</div>
-                <div class="trip-address">{maskAddress(trip.destination_address)}, {trip.destination_city}</div>
-              </div>
-              <div class="trip-meta">
-                <span>{formatDuration(trip.duration_hours)}</span>
-                {#if trip.origin_latitude != null && trip.origin_longitude != null}
-                  <span>({Number(trip.origin_latitude).toFixed(4)}, {Number(trip.origin_longitude).toFixed(4)})</span>
-                {/if}
-                {#if trip.destination_latitude != null && trip.destination_longitude != null}
-                  <span>→ ({Number(trip.destination_latitude).toFixed(4)}, {Number(trip.destination_longitude).toFixed(4)})</span>
+  <!-- Main horizontal layout: Left (Map + Route details) | Right (Trips full height) -->
+  <Resizable.PaneGroup direction="horizontal" class="flex-1 h-full">
+    <!-- Left: Nested vertical panels (Map top, Route details bottom) -->
+    <Resizable.Pane defaultSize={65} minSize={40} class="relative">
+      <Resizable.PaneGroup direction="vertical" class="h-full">
+        <!-- Top: Map Panel -->
+        <Resizable.Pane defaultSize={showRoutePanel ? 60 : 100} minSize={40} class="relative">
+          <div class="absolute inset-0" in:fade={{ duration: 400 }}>
+            {#if trips.length > 0}
+              <div class="absolute top-4 left-4 z-10 rounded-xl border border-border/70 bg-background/90 px-4 py-3 shadow">
+                <div class="text-xs uppercase tracking-wide text-muted-foreground">Map view</div>
+                <div class="text-sm font-semibold">{overlayMode === OVERLAY_SEGMENTS ? `${mappedTripCount} of ${trips.length} trips displayed` : overlayLoading ? `Loading ${overlayMode === OVERLAY_DRIVING ? 'driving' : 'transit'} routes…` : `${(overlayMode === OVERLAY_DRIVING ? drivingRoutes.length : transitRoutes.length) || 0} ${overlayMode === OVERLAY_DRIVING ? 'driving' : 'transit'} routes displayed`}</div>
+                <div class="mt-2 flex flex-wrap gap-2">
+                  <Button size="sm" variant={overlayMode === OVERLAY_SEGMENTS ? 'secondary' : 'outline'} on:click={() => changeOverlayMode(OVERLAY_SEGMENTS)} disabled={overlayLoading}>Trip Segments</Button>
+                  <Button size="sm" variant={overlayMode === OVERLAY_DRIVING ? 'secondary' : 'outline'} on:click={() => changeOverlayMode(OVERLAY_DRIVING)} disabled={overlayLoading}>Driving Routes</Button>
+                  <Button size="sm" variant={overlayMode === OVERLAY_TRANSIT ? 'secondary' : 'outline'} on:click={() => changeOverlayMode(OVERLAY_TRANSIT)} disabled={overlayLoading}>Transit Routes</Button>
+                </div>
+                {#if overlayError}
+                  <div class="mt-2 text-xs text-destructive">{overlayError}</div>
                 {/if}
               </div>
-              <div class="trip-actions">
-                <span
-                  role="button"
-                  tabindex="0"
-                  class="route-button {routeLoading ? 'disabled' : ''}"
-                  aria-disabled={routeLoading ? 'true' : 'false'}
-                  on:click|stopPropagation={() => {
-                    if (routeLoading) return;
-                    selectTrip(trip);
-                    fetchDrivingRoute(trip);
-                  }}
-                  on:keydown|stopPropagation={(event) => {
-                    if (routeLoading) return;
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      selectTrip(trip);
-                      fetchDrivingRoute(trip);
-                    }
-                  }}
-                >
-                  {#if routeLoading && pendingRouteMode === 'standard' && selectedTrip?.trip_id === trip.trip_id}
-                    <span class="spinner" aria-hidden="true"></span>
-                    <span class="route-button-label">Fetching…</span>
-                  {:else}
-                    <span class="route-button-label">Fetch Driving Route</span>
+            {/if}
+            {#if loading && trips.length === 0}
+              <div class="flex h-full items-center justify-center text-sm text-muted-foreground">Loading map…</div>
+            {:else}
+              <TripRouteMap
+                mapKey={mapKey}
+                center={mapCenter}
+                zoom={mapZoom}
+                overlayMode={overlayMode}
+                overlaySegments={tripSegments}
+                drivingRoutes={drivingRoutes}
+                transitRoutes={transitRoutes}
+                routeCoordinates={routeCoordinates}
+                routeMode={routeMode}
+                selectedTripId={selectedTrip?.trip_id}
+              />
+            {/if}
+          </div>
+        </Resizable.Pane>
+
+        {#if showRoutePanel}
+          <Resizable.Handle withHandle />
+
+          <!-- Bottom: Route Details Panel -->
+          <Resizable.Pane defaultSize={40} minSize={20} class="flex flex-col overflow-hidden bg-card border-t border-border/40">
+            <!-- Route Header -->
+            <div class="flex-shrink-0 border-b border-border/40 px-3 py-2 bg-muted/30">
+              <div class="flex items-center justify-between">
+                <div>
+                  <span class="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    {routeMode === 'transit' ? 'Google Transit Route' : 'Google Route'}
+                  </span>
+                  {#if googleRoute?.summary}
+                    <p class="text-xs text-muted-foreground">{googleRoute.summary}</p>
                   {/if}
-                </span>
-                <span
-                  role="button"
-                  tabindex="0"
-                  class="route-button transit {routeLoading ? 'disabled' : ''}"
-                  aria-disabled={routeLoading ? 'true' : 'false'}
-                  on:click|stopPropagation={() => {
-                    if (routeLoading) return;
-                    selectTrip(trip);
-                    fetchTransitRoute(trip);
-                  }}
-                  on:keydown|stopPropagation={(event) => {
-                    if (routeLoading) return;
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      selectTrip(trip);
-                      fetchTransitRoute(trip);
-                    }
-                  }}
-                >
-                  {#if routeLoading && pendingRouteMode === 'transit' && selectedTrip?.trip_id === trip.trip_id}
-                    <span class="spinner" aria-hidden="true"></span>
-                    <span class="route-button-label">Fetching…</span>
-                  {:else}
-                    <span class="route-button-label">Fetch Transit Route</span>
-                  {/if}
-                </span>
+                </div>
+                <Button size="icon" variant="ghost" on:click={closeRoutePanel} aria-label="Close route panel" class="h-7 w-7">×</Button>
               </div>
-            </button>
-          {/each}
-        </div>
-      {/if}
-    </div>
-  </div>
-</aside>
-
-{#if showRoutePanel}
-  <aside
-    class="route-panel"
-    in:fly={{ y: 40, duration: 300, delay: 80 }}
-    out:fade={{ duration: 200 }}
-  >
-    <div class="route-inner">
-      <header class="route-header">
-        <div>
-          <h3>{routeMode === 'transit' ? 'Google Transit Route' : 'Google Route'}</h3>
-          {#if googleRoute?.summary}
-            <p class="route-summary">{googleRoute.summary}</p>
-          {/if}
-        </div>
-        <button class="route-close" on:click={closeRoutePanel} aria-label="Close Google route panel">×</button>
-      </header>
-
-      <div class="route-content">
-        {#if routeLoading}
-          <div class="state">
-            <span class="spinner" aria-hidden="true"></span>
-            <p>Fetching {routeMode === 'transit' ? 'Google transit route' : 'Google route'}…</p>
-          </div>
-        {:else if routeError}
-          <div class="state error">
-            <p>{routeError}</p>
-            {#if selectedTrip}
-              <button
-                class="retry-button"
-                on:click={() => {
-                  if (routeMode === 'transit') {
-                    fetchTransitRoute(selectedTrip);
-                  } else {
-                    fetchDrivingRoute(selectedTrip);
-                  }
-                }}
-                disabled={routeLoading}
-              >
-                Try again
-              </button>
-            {/if}
-          </div>
-        {:else if googleRoute}
-          <div class="route-metrics">
-            {#if googleRoute.distance_text}
-              <div class="metric">
-                <span class="metric-label">Distance</span>
-                <span class="metric-value">{googleRoute.distance_text}</span>
-              </div>
-            {/if}
-            {#if googleRoute.duration_text}
-              <div class="metric">
-                <span class="metric-label">Duration</span>
-                <span class="metric-value">{googleRoute.duration_text}</span>
-              </div>
-            {/if}
-          </div>
-
-          {#if googleRoute.warnings && googleRoute.warnings.length > 0}
-            <div class="route-warnings">
-              <h4>Warnings</h4>
-              <ul>
-                {#each googleRoute.warnings as warning}
-                  <li>{warning}</li>
-                {/each}
-              </ul>
             </div>
-          {/if}
-
-          <div class="route-legs">
-            {#each routeLegs as leg, index}
-              <div class="route-leg">
-                <div class="route-leg-header">
-                  <div>
-                    <span class="route-leg-title">Leg {index + 1}</span>
-                    {#if leg.start_address && leg.end_address}
-                      <p class="route-leg-addresses">{maskAddress(leg.start_address)} → {maskAddress(leg.end_address)}</p>
+            <!-- Route Content -->
+            <div class="flex-1 overflow-y-auto p-3">
+              {#if routeLoading}
+                <div class="flex items-center gap-2 text-sm text-muted-foreground">
+                  <div class="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+                  <p>Fetching {routeMode === 'transit' ? 'Google transit route' : 'Google route'}…</p>
+                </div>
+              {:else if routeError}
+                <div class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  <p>{routeError}</p>
+                  {#if selectedTrip}
+                    <div class="mt-2">
+                      <Button
+                        size="sm"
+                        on:click={() => {
+                          if (routeMode === 'transit') {
+                            fetchTransitRoute(selectedTrip);
+                          } else {
+                            fetchDrivingRoute(selectedTrip);
+                          }
+                        }}
+                        disabled={routeLoading}
+                      >
+                        Try again
+                      </Button>
+                    </div>
+                  {/if}
+                </div>
+              {:else if googleRoute}
+                <div class="space-y-3">
+                  <div class="grid grid-cols-2 gap-3 text-sm">
+                    {#if googleRoute.distance_text}
+                      <div>
+                        <div class="text-muted-foreground">Distance</div>
+                        <div class="font-semibold">{googleRoute.distance_text}</div>
+                      </div>
+                    {/if}
+                    {#if googleRoute.duration_text}
+                      <div>
+                        <div class="text-muted-foreground">Duration</div>
+                        <div class="font-semibold">{googleRoute.duration_text}</div>
+                      </div>
                     {/if}
                   </div>
-                  <div class="route-leg-metrics">
-                    {#if leg.distance_text}<span>{leg.distance_text}</span>{/if}
-                    {#if leg.duration_text}<span>{leg.duration_text}</span>{/if}
-                  </div>
-                </div>
 
-                {#if leg.steps && leg.steps.length > 0}
-                  <div class="route-leg-body">
-                    {#each leg.steps as step}
-                      <div class="route-step">
-                        {#if step.instruction}
-                          <div class="route-step-instruction">{@html step.instruction}</div>
-                        {/if}
-                        <div class="route-step-meta">
-                          {#if step.travel_mode}<span class="route-step-mode">{step.travel_mode}</span>{/if}
-                          {#if step.distance_text}<span>{step.distance_text}</span>{/if}
-                          {#if step.duration_text}<span>{step.duration_text}</span>{/if}
+                  {#if googleRoute.warnings && googleRoute.warnings.length > 0}
+                    <div class="rounded-md border border-border/70 bg-muted/50 p-3">
+                      <div class="text-sm font-semibold mb-1">Warnings</div>
+                      <ul class="list-disc pl-5 text-sm text-muted-foreground space-y-1">
+                        {#each googleRoute.warnings as warning}
+                          <li>{warning}</li>
+                        {/each}
+                      </ul>
+                    </div>
+                  {/if}
+
+                  {#each routeLegs as leg, index}
+                    <div class="rounded-md border border-border/70 bg-card p-3 shadow-sm">
+                      <div class="flex items-start justify-between gap-3">
+                        <div>
+                          <div class="text-sm font-semibold">Leg {index + 1}</div>
+                          {#if leg.start_address && leg.end_address}
+                            <p class="text-sm text-muted-foreground">{maskAddress(leg.start_address)} → {maskAddress(leg.end_address)}</p>
+                          {/if}
+                        </div>
+                        <div class="text-xs text-muted-foreground space-y-1">
+                          {#if leg.distance_text}<div>{leg.distance_text}</div>{/if}
+                          {#if leg.duration_text}<div>{leg.duration_text}</div>{/if}
                         </div>
                       </div>
-                    {/each}
-                  </div>
-                {/if}
-              </div>
-            {/each}
+
+                      {#if leg.steps && leg.steps.length > 0}
+                        <div class="mt-3 space-y-2">
+                          {#each leg.steps as step}
+                            <div class="rounded border border-border/70 bg-muted/30 px-2 py-2 text-sm">
+                              {#if step.instruction}
+                                <div class="font-medium">{@html step.instruction}</div>
+                              {/if}
+                              <div class="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                {#if step.travel_mode}<span class="rounded-full bg-secondary px-2 py-0.5 text-secondary-foreground">{step.travel_mode}</span>{/if}
+                                {#if step.distance_text}<span>{step.distance_text}</span>{/if}
+                                {#if step.duration_text}<span>{step.duration_text}</span>{/if}
+                              </div>
+                            </div>
+                          {/each}
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              {:else}
+                <div class="text-sm text-muted-foreground">Select a trip and fetch a Google route.</div>
+              {/if}
+            </div>
+          </Resizable.Pane>
+        {/if}
+      </Resizable.PaneGroup>
+    </Resizable.Pane>
+
+    <Resizable.Handle withHandle />
+
+    <!-- Right: Trips List Panel (full height) -->
+    <Resizable.Pane defaultSize={35} minSize={25} class="bg-card border-l border-border/40 flex flex-col overflow-hidden">
+      <!-- Trips Header -->
+      <div class="flex-shrink-0 border-b border-border/40 px-3 py-2 bg-muted/30">
+        <div class="flex items-center justify-between">
+          <div>
+            <span class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Tri Delta Transit Trips</span>
+            <p class="text-xs text-muted-foreground">Historical rides from Aurora</p>
           </div>
+          <Button size="icon" variant="ghost" on:click={loadTrips} disabled={loading} aria-label="Reload trips" class="h-7 w-7">
+            {#if loading}
+              <div class="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+            {:else}
+              ↻
+            {/if}
+          </Button>
+        </div>
+      </div>
+      <!-- Trips Content -->
+      <div class="flex-1 overflow-y-auto p-3">
+        {#if loading && trips.length === 0}
+          <div class="flex flex-col items-center gap-2 text-sm text-muted-foreground">
+            <div class="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+            <p>Loading trip history…</p>
+          </div>
+        {:else if error}
+          <div class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {error}
+            <div class="mt-2">
+              <Button size="sm" on:click={loadTrips}>Try again</Button>
+            </div>
+          </div>
+        {:else if trips.length === 0}
+          <div class="text-sm text-muted-foreground">No trip records are available yet.</div>
         {:else}
-          <div class="state">
-            <p>Select a trip and fetch a Google route.</p>
+          <p class="text-sm text-muted-foreground mb-2">Showing {trips.length} trips</p>
+          <div class="space-y-2">
+            {#each trips as trip (trip.trip_id)}
+              <button
+                class={`w-full rounded-lg border px-3 py-3 text-left shadow-sm transition hover:border-primary/60 ${selectedTrip?.trip_id === trip.trip_id ? 'border-primary/60 bg-primary/5' : 'border-border/70 bg-card'}`}
+                on:click={() => selectTrip(trip)}
+              >
+                <div class="flex items-center justify-between text-sm font-semibold">
+                  <span>Trip #{trip.trip_id}</span>
+                  <span class="text-xs text-muted-foreground">{formatDuration(trip.duration_hours)}</span>
+                </div>
+                <div class="mt-2 space-y-1 text-sm">
+                  <div class="text-muted-foreground">Origin</div>
+                  <div class="font-medium">{maskAddress(trip.origin_address)}, {trip.origin_city}</div>
+                  <div class="text-muted-foreground">Destination</div>
+                  <div class="font-medium">{maskAddress(trip.destination_address)}, {trip.destination_city}</div>
+                </div>
+                <div class="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                  {#if trip.origin_latitude != null && trip.origin_longitude != null}
+                    <span>({Number(trip.origin_latitude).toFixed(4)}, {Number(trip.origin_longitude).toFixed(4)})</span>
+                  {/if}
+                  {#if trip.destination_latitude != null && trip.destination_longitude != null}
+                    <span>→ ({Number(trip.destination_latitude).toFixed(4)}, {Number(trip.destination_longitude).toFixed(4)})</span>
+                  {/if}
+                </div>
+                <div class="mt-3 flex flex-wrap gap-2 text-sm">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={routeLoading}
+                    on:click={(event) => {
+                      event.stopPropagation();
+                      if (routeLoading) return;
+                      selectTrip(trip);
+                      fetchDrivingRoute(trip);
+                    }}
+                  >
+                    {routeLoading && pendingRouteMode === 'standard' && selectedTrip?.trip_id === trip.trip_id ? 'Fetching…' : 'Driving route'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={routeLoading}
+                    on:click={(event) => {
+                      event.stopPropagation();
+                      if (routeLoading) return;
+                      selectTrip(trip);
+                      fetchTransitRoute(trip);
+                    }}
+                  >
+                    {routeLoading && pendingRouteMode === 'transit' && selectedTrip?.trip_id === trip.trip_id ? 'Fetching…' : 'Transit route'}
+                  </Button>
+                </div>
+              </button>
+            {/each}
           </div>
         {/if}
       </div>
-    </div>
-  </aside>
-{/if}
-
-<style>
-  :global(body) {
-    overflow: hidden;
-  }
-
-  :global(.leaflet-container) {
-    height: 100vh !important;
-    width: 100vw !important;
-  }
-
-  .map-container {
-    position: fixed;
-    inset: 0;
-    z-index: 0;
-  }
-
-  .map-overlay {
-    position: absolute;
-    top: 1.25rem;
-    left: 1.25rem;
-    padding: 0.75rem 1rem;
-    border-radius: 0.75rem;
-    background: rgba(255, 255, 255, 0.92);
-    backdrop-filter: blur(6px);
-    box-shadow: 0 12px 32px -18px rgba(15, 23, 42, 0.45);
-    color: #111827;
-    font-family: system-ui, -apple-system, sans-serif;
-    z-index: 1000;
-    pointer-events: none;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .overlay-title {
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #6b7280;
-  }
-
-  .overlay-value {
-    margin-top: 0.2rem;
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: #1f2937;
-  }
-
-  .overlay-controls {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    pointer-events: auto;
-  }
-
-  .overlay-button {
-    padding: 0.35rem 0.75rem;
-    border-radius: 9999px;
-    border: 1px solid #d1d5db;
-    background: rgba(255, 255, 255, 0.9);
-    color: #1f2937;
-    font-size: 0.8rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
-  }
-
-  .overlay-button:hover:not(:disabled) {
-    transform: translateY(-1px);
-    background: rgba(37, 99, 235, 0.12);
-  }
-
-  .overlay-button.active {
-    background: #2563eb;
-    border-color: #1d4ed8;
-    color: #fff;
-    box-shadow: 0 12px 20px -12px rgba(37, 99, 235, 0.7);
-  }
-
-  .overlay-button:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-    transform: none;
-  }
-
-  .overlay-error {
-    margin-top: 0.1rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: #b91c1c;
-    pointer-events: auto;
-  }
-
-  .back-button {
-    position: fixed;
-    top: 1.5rem;
-    left: 1.5rem;
-    z-index: 50;
-    background: rgba(255, 255, 255, 0.9);
-    backdrop-filter: blur(6px);
-    color: #1f2937;
-    border: 1px solid #e5e7eb;
-    border-radius: 9999px;
-    padding: 0.75rem;
-    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-    cursor: pointer;
-  }
-
-  .back-button:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 18px 35px rgba(15, 23, 42, 0.16);
-  }
-
-  .back-button:focus {
-    outline: 2px solid #2563eb;
-    outline-offset: 2px;
-  }
-
-  .icon {
-    width: 1.5rem;
-    height: 1.5rem;
-  }
-
-  .trips-panel {
-    position: fixed;
-    top: 1.5rem;
-    right: 1.5rem;
-    width: 24rem;
-    height: calc(100vh - 3rem);
-    max-height: calc(100vh - 3rem);
-    z-index: 40;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .panel-inner {
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(10px);
-    border-radius: 1.5rem;
-    border: 1px solid #e5e7eb;
-    box-shadow: 0 25px 45px -12px rgba(15, 23, 42, 0.25);
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    height: 100%;
-    min-height: 0;
-  }
-
-  .route-panel {
-    position: fixed;
-    top: 1.5rem;
-    right: calc(1.5rem + 24rem + 1.25rem);
-    width: 22rem;
-    max-height: calc(100vh - 3rem);
-    z-index: 35;
-    display: flex;
-  }
-
-  .route-inner {
-    background: rgba(15, 23, 42, 0.92);
-    backdrop-filter: blur(10px);
-    border-radius: 1.25rem;
-    border: 1px solid rgba(148, 163, 184, 0.35);
-    color: #f8fafc;
-    box-shadow: 0 25px 45px -18px rgba(15, 23, 42, 0.55);
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-    max-height: 100%;
-    min-height: 0;
-  }
-
-  .route-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    padding: 1.25rem 1.25rem 0.75rem;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.35);
-    gap: 1rem;
-  }
-
-  .route-header h3 {
-    margin: 0;
-    font-size: 1.1rem;
-  }
-
-  .route-summary {
-    margin: 0.25rem 0 0;
-    font-size: 0.85rem;
-    color: #cbd5f5;
-  }
-
-  .route-close {
-    background: transparent;
-    border: 1px solid rgba(148, 163, 184, 0.45);
-    border-radius: 9999px;
-    width: 2.2rem;
-    height: 2.2rem;
-    font-size: 1.4rem;
-    line-height: 1;
-    color: #e2e8f0;
-    cursor: pointer;
-  }
-
-  .route-close:hover {
-    background: rgba(148, 163, 184, 0.15);
-  }
-
-  .route-content {
-    padding: 1rem 1.25rem 1.5rem;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .route-metrics {
-    display: flex;
-    gap: 1rem;
-  }
-
-  .metric {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-    background: rgba(148, 163, 184, 0.12);
-    padding: 0.75rem;
-    border-radius: 0.75rem;
-  }
-
-  .metric-label {
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #cbd5f5;
-  }
-
-  .metric-value {
-    font-size: 1rem;
-    font-weight: 600;
-    color: #f8fafc;
-  }
-
-  .route-warnings {
-    background: rgba(252, 165, 165, 0.12);
-    border: 1px solid rgba(248, 113, 113, 0.35);
-    border-radius: 0.75rem;
-    padding: 0.75rem;
-  }
-
-  .route-warnings h4 {
-    margin: 0;
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: #fecaca;
-  }
-
-  .route-warnings ul {
-    margin: 0.5rem 0 0;
-    padding-left: 1rem;
-    color: #fee2e2;
-    font-size: 0.85rem;
-  }
-
-  .route-legs {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .route-leg {
-    border: 1px solid rgba(148, 163, 184, 0.25);
-    border-radius: 0.75rem;
-    padding: 0.85rem;
-    background: rgba(15, 23, 42, 0.55);
-  }
-
-  .route-leg-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 0.75rem;
-  }
-
-  .route-leg-title {
-    font-weight: 600;
-    font-size: 0.9rem;
-    color: #f8fafc;
-  }
-
-  .route-leg-addresses {
-    margin: 0.25rem 0 0;
-    font-size: 0.8rem;
-    color: #cbd5f5;
-  }
-
-  .route-leg-metrics {
-    display: flex;
-    gap: 0.5rem;
-    font-size: 0.8rem;
-    color: #e2e8f0;
-  }
-
-  .route-leg-body {
-    margin-top: 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .route-step {
-    background: rgba(30, 41, 59, 0.75);
-    border-radius: 0.65rem;
-    padding: 0.6rem 0.75rem;
-    border: 1px solid rgba(148, 163, 184, 0.25);
-  }
-
-  .route-step-instruction {
-    color: #e2e8f0;
-    font-size: 0.85rem;
-  }
-
-  .route-step-meta {
-    margin-top: 0.35rem;
-    display: flex;
-    gap: 0.65rem;
-    font-size: 0.75rem;
-    color: #cbd5f5;
-  }
-
-  .route-step-mode {
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-
-  .route-content .state {
-    color: #cbd5f5;
-  }
-
-  .trip-count {
-    margin: 0 0 0.75rem;
-    font-size: 0.95rem;
-    color: #4b5563;
-    font-weight: 600;
-  }
-
-  .trip-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    padding-right: 0.5rem;
-    overflow-y: auto;
-  }
-
-  .trip-card {
-    text-align: left;
-    width: 100%;
-    border: 1px solid rgba(148, 163, 184, 0.35);
-    border-radius: 1rem;
-    padding: 0.85rem 1rem;
-    background: rgba(255, 255, 255, 0.9);
-    box-shadow: 0 10px 25px -15px rgba(15, 23, 42, 0.3);
-    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-    cursor: pointer;
-  }
-
-  .trip-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 18px 30px -10px rgba(37, 99, 235, 0.18);
-    border-color: rgba(37, 99, 235, 0.45);
-  }
-
-  .trip-card.selected {
-    border-color: rgba(37, 99, 235, 0.55);
-    box-shadow: 0 18px 32px -14px rgba(37, 99, 235, 0.35);
-    background: rgba(219, 234, 254, 0.65);
-  }
-
-  .trip-id {
-    font-weight: 700;
-    color: #1d4ed8;
-    margin-bottom: 0.5rem;
-  }
-
-  .trip-route {
-    display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
-    font-size: 0.85rem;
-    color: #374151;
-  }
-
-  .trip-label {
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: #6b7280;
-    font-size: 0.7rem;
-  }
-
-  .trip-address {
-    font-family: 'DM Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-    padding: 0.15rem 0.35rem;
-    border-radius: 0.35rem;
-    background: rgba(209, 213, 219, 0.25);
-  }
-
-  .trip-meta {
-    margin-top: 0.55rem;
-    display: flex;
-    gap: 0.75rem;
-    font-size: 0.8rem;
-    color: #4b5563;
-    flex-wrap: wrap;
-  }
-
-  .trip-actions {
-    margin-top: 0.75rem;
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-
-  .route-button {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.55rem 1rem;
-    border-radius: 9999px;
-    border: 1px solid #22c55e;
-    background: linear-gradient(135deg, #22c55e, #16a34a);
-    color: #fff;
-    font-size: 0.85rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
-  }
-
-  .route-button.transit {
-    border: 1px solid #6366f1;
-    background: linear-gradient(135deg, #6366f1, #4f46e5);
-    box-shadow: 0 15px 25px -12px rgba(99, 102, 241, 0.45);
-  }
-
-  .route-button:hover:not(.disabled) {
-    transform: translateY(-1px);
-    box-shadow: 0 15px 25px -12px rgba(34, 197, 94, 0.45);
-  }
-
-  .route-button.transit:hover:not(.disabled) {
-    box-shadow: 0 15px 25px -10px rgba(99, 102, 241, 0.55);
-  }
-
-  .route-button.disabled {
-    cursor: not-allowed;
-    opacity: 0.7;
-    box-shadow: none;
-  }
-
-  .route-button:focus-visible {
-    outline: 2px solid #22d3ee;
-    outline-offset: 3px;
-  }
-
-  .route-button-label {
-    line-height: 1;
-  }
-
-  .state {
-    text-align: center;
-    padding: 2rem 1rem;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 1rem;
-    color: #4b5563;
-  }
-
-  .state.error {
-    color: #b91c1c;
-  }
-
-  .retry-button {
-    padding: 0.5rem 1rem;
-    border-radius: 9999px;
-    border: 1px solid #ef4444;
-    background: #fee2e2;
-    color: #b91c1c;
-    cursor: pointer;
-  }
-
-  .retry-button:hover {
-    background: #fecaca;
-  }
-
-  .spinner {
-    width: 1.1rem;
-    height: 1.1rem;
-    border: 3px solid rgba(255, 255, 255, 0.6);
-    border-top-color: rgba(37, 99, 235, 0.9);
-    border-radius: 9999px;
-    animation: spin 0.75s linear infinite;
-  }
-
-  .route-button .spinner {
-    width: 1rem;
-    height: 1rem;
-    border: 2px solid rgba(255, 255, 255, 0.6);
-    border-top-color: rgba(15, 23, 42, 0.8);
-  }
-
-  @keyframes spin {
-    from {
-      transform: rotate(0deg);
-    }
-    to {
-      transform: rotate(360deg);
-    }
-  }
-</style>
+    </Resizable.Pane>
+  </Resizable.PaneGroup>
+</PageShell>

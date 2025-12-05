@@ -1,4 +1,5 @@
-<script>
+<script lang="ts">
+  // @ts-nocheck
   import { createEventDispatcher, onMount } from 'svelte';
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
@@ -19,7 +20,6 @@
   export let loading = false;
   export let error = null;
   export let responseData = null;
-  let showAdvanced = false;
 
   // Add predefined origin addresses
   const predefinedOrigins = [
@@ -70,17 +70,7 @@
     departureTime: formatDateTimeLocal(now),
     returnTime: formatDateTimeLocal(fourHoursLater),
     originAddress: predefinedOrigins[0].address,
-    destinationAddress: predefinedDestinations[0].address,
-    providerType: '',
-    routingType: '',
-    scheduleType: '',
-    planningType: '',
-    eligibilityReqContains: '',
-    providerOrg: '',
-    providerNameContains: '',
-    hasServiceZone: null,
-    bookingMethod: '',
-    fareType: ''
+    destinationAddress: predefinedDestinations[0].address
   };
 
   function handleSubmit() {
@@ -411,174 +401,6 @@
         </div>
       </CardContent>
     </Card>
-
-    <!-- Advanced toggle -->
-    <div class="pt-1">
-      <button
-        type="button"
-        class="inline-flex items-center text-sm font-medium text-indigo-700 hover:text-indigo-800"
-        on:click={() => showAdvanced = !showAdvanced}
-      >
-        <span class="mr-2">{showAdvanced ? 'Hide' : 'Show'} advanced filters</span>
-        <svg class={`w-4 h-4 transition-transform ${showAdvanced ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
-    </div>
-
-    {#if showAdvanced}
-      <Card class="border-dashed">
-        <CardHeader>
-          <CardTitle class="text-base text-muted-foreground">Advanced filters</CardTitle>
-        </CardHeader>
-        <CardContent class="space-y-3">
-        <!-- Provider Type Filter -->
-        <div class="space-y-1">
-          <label for="providerType" class="block text-sm font-medium text-gray-700">Provider type</label>
-          <select 
-            id="providerType"
-            bind:value={formData.providerType}
-            class="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <option value="">Any</option>
-            <option value="Bus">Bus</option>
-            <option value="Train">Train</option>
-            <option value="Shuttle">Shuttle</option>
-            <option value="Paratransit">Paratransit</option>
-            <option value="On-demand">On-demand</option>
-            <option value="ADA-para">ADA Paratransit</option>
-            <option value="volunteer-driver">Volunteer Driver</option>
-          </select>
-        </div>
-
-        <!-- Routing Type Filter -->
-        <div class="space-y-1">
-          <label for="routingType" class="block text-sm font-medium text-gray-700">Routing type</label>
-          <select 
-            id="routingType"
-            bind:value={formData.routingType}
-            class="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <option value="">Any</option>
-            <option value="Fixed">Fixed Route</option>
-            <option value="Flexible">Flexible Route</option>
-            <option value="On-demand">On-demand</option>
-            <option value="door-to-door">Door-to-door</option>
-            <option value="curb-to-curb">Curb-to-curb</option>
-          </select>
-        </div>
-
-        <!-- Schedule Type Filter -->
-        <div class="space-y-1">
-          <label for="scheduleType" class="block text-sm font-medium text-gray-700">Schedule type</label>
-          <select 
-            id="scheduleType"
-            bind:value={formData.scheduleType}
-            class="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <option value="">Any</option>
-            <option value="Static">Static</option>
-            <option value="Dynamic">Dynamic</option>
-            <option value="Real-time">Real-time</option>
-          </select>
-        </div>
-
-        <!-- Planning Type Filter -->
-        <div class="space-y-1">
-          <label for="planningType" class="block text-sm font-medium text-gray-700">Planning type</label>
-          <select 
-            id="planningType"
-            bind:value={formData.planningType}
-            class="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <option value="">Any</option>
-            <option value="Manual">Manual</option>
-            <option value="Algorithmic">Algorithmic</option>
-            <option value="Hybrid">Hybrid</option>
-          </select>
-        </div>
-
-        <!-- Eligibility Requirements Filter (contains) -->
-        <div class="space-y-1">
-          <label for="eligibilityReqContains" class="block text-sm font-medium text-gray-700">Eligibility text (contains)</label>
-          <Input 
-            id="eligibilityReqContains"
-            bind:value={formData.eligibilityReqContains}
-            placeholder="e.g., ADA, senior, veteran"
-          />
-        </div>
-
-        <!-- Provider Organization Filter -->
-        <div class="space-y-1">
-          <label for="providerOrg" class="block text-sm font-medium text-gray-700">Provider organization</label>
-          <Input 
-            id="providerOrg"
-            bind:value={formData.providerOrg}
-            placeholder="e.g., Metro Transit"
-          />
-        </div>
-
-        <!-- Provider Name Search -->
-        <div class="space-y-1">
-          <label for="providerNameContains" class="block text-sm font-medium text-gray-700">Provider name contains</label>
-          <Input 
-            id="providerNameContains"
-            bind:value={formData.providerNameContains}
-            placeholder="e.g., transit"
-          />
-        </div>
-
-        <!-- Has Service Zone Filter -->
-        <div class="space-y-1">
-          <label for="hasServiceZone" class="block text-sm font-medium text-gray-700">Service zone</label>
-          <select 
-            id="hasServiceZone"
-            bind:value={formData.hasServiceZone}
-            class="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            on:change={(e) => {
-              const val = e.target.value;
-              formData.hasServiceZone = val === 'null' ? null : val === 'true';
-            }}
-          >
-            <option value="null">Any</option>
-            <option value="true">Has service zone only</option>
-            <option value="false">No service zone</option>
-          </select>
-        </div>
-
-        <!-- Booking method filter -->
-        <div class="space-y-1">
-          <label for="bookingMethod" class="block text-sm font-medium text-gray-700">Booking method</label>
-          <select 
-            id="bookingMethod"
-            bind:value={formData.bookingMethod}
-            class="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <option value="">Any</option>
-            <option value="phone">Phone</option>
-            <option value="web">Web</option>
-            <option value="none">No booking required</option>
-          </select>
-        </div>
-
-        <!-- Fare type filter -->
-        <div class="space-y-1">
-          <label for="fareType" class="block text-sm font-medium text-gray-700">Fare type</label>
-          <select 
-            id="fareType"
-            bind:value={formData.fareType}
-            class="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <option value="">Any</option>
-            <option value="fixed">Fixed</option>
-            <option value="distance">By distance</option>
-            <option value="zone">By zone</option>
-            <option value="free">Free</option>
-          </select>
-        </div>
-        </CardContent>
-      </Card>
-    {/if}
 
     <div class="space-y-2">
       <Button type="submit" class="mt-2 w-full" disabled={loading}>

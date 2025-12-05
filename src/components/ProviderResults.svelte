@@ -173,14 +173,25 @@
     return Math.floor(5 + random * 16); // 5-20 minutes
   }
 
+  // Normalize provider list in case payload is nested or malformed
+  $: normalizedProviders = (() => {
+    if (!providerData) return [];
+    let providers = providerData.data;
+    if (!Array.isArray(providers) && providers && Array.isArray(providers.data)) {
+      providers = providers.data;
+    }
+    if (!Array.isArray(providers)) return [];
+    return providers;
+  })();
+
   // Sort providers by trip duration (shortest to longest) if we have provider data
-  $: sortedProviders = providerData?.data ? 
-    [...providerData.data]
-      .map(provider => ({
-        ...provider,
-        estimatedDuration: generateTripDuration(provider.provider_id)
-      }))
-      .sort((a, b) => a.estimatedDuration - b.estimatedDuration) 
+  $: sortedProviders = normalizedProviders.length
+    ? [...normalizedProviders]
+        .map(provider => ({
+          ...provider,
+          estimatedDuration: generateTripDuration(provider.provider_id)
+        }))
+        .sort((a, b) => a.estimatedDuration - b.estimatedDuration)
     : [];
 </script>
 

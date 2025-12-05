@@ -1,7 +1,10 @@
-<script>
+<script lang="ts">
   import { push } from 'svelte-spa-router';
   import { createEventDispatcher } from 'svelte';
-  
+  import PageShell from '$lib/components/PageShell.svelte';
+  import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '$lib/components/ui/card';
+  import { Input } from '$lib/components/ui/input';
+
   const dispatch = createEventDispatcher();
   
   let name = '';
@@ -9,8 +12,7 @@
   let submitted = false;
   let error = '';
   
-  function validatePhoneNumber(phone) {
-    // Basic validation for phone number
+  function validatePhoneNumber(phone: string) {
     const phoneRegex = /^\+?[1-9]\d{9,14}$/;
     return phoneRegex.test(phone);
   }
@@ -29,90 +31,55 @@
     }
     
     if (!validatePhoneNumber(phoneNumber)) {
-      error = 'Please enter a valid phone number';
+      error = 'Please enter a valid phone number with country code';
       return;
     }
     
-    // TODO: Add API call to save beta tester info
+    // TODO: hook into backend
     submitted = true;
-  }
-  
-  function handleBack() {
-    push('/');
   }
 </script>
 
-<main class="min-h-screen bg-gray-100 p-8 flex justify-center">
-  <div class="w-full max-w-md">
-    <div class="bg-white shadow-lg rounded-3xl p-8">
-      <div class="flex justify-between items-center mb-6">
-        <h1 class="text-2xl font-bold text-gray-900">SMS Beta Test Signup</h1>
-        <button
-          class="px-3 py-1 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
-          on:click={handleBack}
-        >
-          Back to Home
-        </button>
-      </div>
-      
-      {#if submitted}
-        <div class="text-center py-8">
-          <svg class="w-16 h-16 text-green-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-          </svg>
-          <h2 class="text-2xl font-semibold text-gray-800 mb-2">Thank You!</h2>
-          <p class="text-gray-600 mb-6">You've successfully signed up for our SMS messaging service beta test.</p>
-          <p class="text-gray-600">We'll contact you soon with further instructions.</p>
-          <button
-            class="mt-6 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-            on:click={handleBack}
-          >
-            Return to Home
-          </button>
-        </div>
-      {:else}
-        <p class="mb-6 text-gray-600">
-          Sign up to be among the first to test our new SMS messaging service! Enter your details below.
-        </p>
-        
-        <form on:submit|preventDefault={handleSubmit} class="space-y-6">
+<PageShell
+  title="SMS Beta Signup"
+  description="Sign up to test our upcoming SMS messaging service. We keep the flow consistent with the rest of OPTIMAT."
+  backHref="/"
+>
+  <div class="max-w-xl">
+    <Card class="shadow-sm border-border/70">
+      <CardHeader>
+        <CardTitle>Join the beta</CardTitle>
+        <CardDescription>We will reach out with details once slots open up.</CardDescription>
+      </CardHeader>
+      <CardContent class="space-y-4">
+        {#if submitted}
+          <div class="flex flex-col items-start gap-2 text-sm text-foreground">
+            <div class="rounded-full bg-green-100 text-green-700 px-3 py-1 text-xs font-semibold">Thanks!</div>
+            <p>You're on the list. We'll text you soon.</p>
+            <button class="text-sm text-primary underline" type="button" on:click={() => push('/')}>Return home</button>
+          </div>
+        {:else}
           {#if error}
-            <div class="p-3 bg-red-100 border border-red-200 text-red-700 rounded-md">
+            <div class="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {error}
             </div>
           {/if}
-          
-          <div>
-            <label for="name" class="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-            <input
-              type="text"
-              id="name"
-              bind:value={name}
-              class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-              placeholder="Enter your full name"
-            />
+          <div class="space-y-2">
+            <label for="name" class="text-sm font-medium text-foreground">Full name</label>
+            <Input id="name" bind:value={name} placeholder="Alex Doe" />
           </div>
-          
-          <div>
-            <label for="phone" class="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
-            <input
-              type="tel"
-              id="phone"
-              bind:value={phoneNumber}
-              class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-              placeholder="Enter your phone number"
-            />
-            <p class="text-xs text-gray-500 mt-1">Format: +1XXXXXXXXXX (include country code)</p>
+          <div class="space-y-2">
+            <label for="phone" class="text-sm font-medium text-foreground">Phone number</label>
+            <Input id="phone" type="tel" bind:value={phoneNumber} placeholder="+14155550123" />
+            <p class="text-xs text-muted-foreground">Include country code so we can message you.</p>
           </div>
-          
-          <button
-            type="submit"
-            class="w-full px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-          >
-            Sign Up for Beta
-          </button>
-        </form>
+        {/if}
+      </CardContent>
+      {#if !submitted}
+        <CardFooter class="flex justify-end">
+          <button class="w-full inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground px-4 py-2 text-sm font-medium shadow-sm hover:opacity-90 transition" on:click={() => handleSubmit()}>Sign up</button>
+        </CardFooter>
       {/if}
-    </div>
+    </Card>
   </div>
-</main> 
+</PageShell>

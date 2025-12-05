@@ -1,4 +1,5 @@
-<script>
+<script lang="ts">
+  // @ts-nocheck
   import { fade, fly } from 'svelte/transition';
   import { 
     serviceZoneManager, 

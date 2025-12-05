@@ -3,7 +3,8 @@
   This component shows how other components can interact with the ping system
 -->
 
-<script>
+<script lang="ts">
+  // @ts-nocheck
   import { pingManager, PingTypes, pings, visiblePingCount, pingsByType } from '../lib/pingManager.js';
   
   let customPingAddress = '';

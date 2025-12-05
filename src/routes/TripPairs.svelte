@@ -1,7 +1,9 @@
-<script>
+<script lang="ts">
+  // @ts-nocheck
   import { onMount } from 'svelte';
   import { fade } from 'svelte/transition';
   import { buildProvidersApiUrl } from '../config';
+  import PageShell from '$lib/components/PageShell.svelte';
 
   let summaries = [];
   let pairs = [];
@@ -18,16 +20,11 @@
     summaryError = null;
     try {
       const response = await fetch(buildProvidersApiUrl('/trip-records/pair-summaries'));
-      if (!response.ok) {
-        throw new Error(`Failed to load summaries (HTTP ${response.status})`);
-      }
+      if (!response.ok) throw new Error(`Failed to load summaries (HTTP ${response.status})`);
       const data = await response.json();
       summaries = [...data].sort((a, b) => (a.service_date < b.service_date ? 1 : -1));
-      if (summaries.length > 0) {
-        selectDate(summaries[0].service_date, { initial: true });
-      }
+      if (summaries.length > 0) selectDate(summaries[0].service_date, { initial: true });
     } catch (error) {
-      console.error('Error loading summaries', error);
       summaryError = error?.message ?? 'Unable to load summaries.';
       summaries = [];
     } finally {
@@ -40,15 +37,10 @@
     loadingPairs = true;
     pairsError = null;
     try {
-      const response = await fetch(
-        buildProvidersApiUrl(`/trip-records/pairs?service_date=${date}`)
-      );
-      if (!response.ok) {
-        throw new Error(`Failed to load pairs (HTTP ${response.status})`);
-      }
+      const response = await fetch(buildProvidersApiUrl(`/trip-records/pairs?service_date=${date}`));
+      if (!response.ok) throw new Error(`Failed to load pairs (HTTP ${response.status})`);
       pairs = await response.json();
     } catch (error) {
-      console.error('Error loading trip pairs', error);
       pairsError = error?.message ?? 'Unable to load trip pairs.';
       pairs = [];
     } finally {
@@ -57,227 +49,204 @@
   }
 
   function selectDate(date, { initial = false } = {}) {
-    if (!initial && date === selectedDate) {
-      return;
-    }
+    if (!initial && date === selectedDate) return;
     selectedDate = date;
     loadPairs(date);
   }
 
   $: selectedSummary = summaries.find((item) => item.service_date === selectedDate);
 
-  function formatDateLabel(dateString) {
+  const formatDateLabel = (dateString) => {
     if (!dateString) return 'Unknown date';
     const value = new Date(dateString);
-    if (Number.isNaN(value.getTime())) {
-      return dateString;
-    }
-    return value.toLocaleDateString(undefined, {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
-  }
-
-  function formatTime(timeString) {
-    if (!timeString) return '—';
-    return timeString.slice(0, 5);
-  }
-
-  function formatMinutes(value) {
-    if (value == null || Number.isNaN(Number(value))) {
-      return '—';
-    }
-    return `${Number(value).toFixed(1)} min`;
-  }
+    if (Number.isNaN(value.getTime())) return dateString;
+    return value.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  };
+  const formatTime = (timeString) => (timeString ? timeString.slice(0, 5) : '—');
+  const formatMinutes = (value) => (value == null || Number.isNaN(Number(value)) ? '—' : `${Number(value).toFixed(1)} min`);
 </script>
 
-<div class="trip-pairs-page">
-  <div class="content-wrapper">
-    <section class="pair-list">
-      <header class="page-header" in:fade={{ duration: 250 }}>
-        <div>
-          <h1>Trip Record Pairs</h1>
-          <p>
-            Review day-level yard pairings with outbound, inbound, and activity metrics. Select a date to
-            explore all paired trips.
-          </p>
-        </div>
-      </header>
+<PageShell
+  title="Trip Record Pairs"
+  description="Day-level yard pairings with outbound, activity, and inbound metrics."
+  backHref="/"
+  fullWidth={true}
+>
+  <div class="trip-pairs-page">
+    <div class="content-wrapper">
+      <section class="pair-list">
+        <header class="page-header" in:fade={{ duration: 250 }}>
+          <div>
+            <h1>Trip Record Pairs</h1>
+            <p>Review day-level yard pairings with outbound, inbound, and activity metrics. Select a date to explore all paired trips.</p>
+          </div>
+        </header>
 
-      {#if summaryError}
-        <div class="error-banner" in:fade>
-          <p>{summaryError}</p>
-        </div>
-      {/if}
+        {#if summaryError}
+          <div class="error-banner" in:fade>
+            <p>{summaryError}</p>
+          </div>
+        {/if}
 
-      {#if loadingPairs}
-        <div class="loading-state" in:fade>
-          <div class="spinner"></div>
-          <p>Loading trip pairs…</p>
+        {#if loadingPairs}
+          <div class="loading-state" in:fade>
+            <div class="spinner"></div>
+            <p>Loading trip pairs…</p>
+          </div>
+        {:else if pairsError}
+          <div class="error-banner" in:fade>
+            <p>{pairsError}</p>
+          </div>
+        {:else if pairs.length === 0}
+          <div class="empty-state" in:fade>
+            <h2>No trip pairs found</h2>
+            <p>Select a different date to view paired trip activity.</p>
+          </div>
+        {:else}
+          <div class="pairs-grid">
+            {#each pairs as pair (pair.service_date + '-' + pair.trip_id)}
+              <article class="pair-card" in:fade>
+                <header class="pair-header">
+                  <div>
+                    <h2>Trip #{pair.trip_id}</h2>
+                    <p class="meta">
+                      {formatDateLabel(pair.service_date)} · {pair.route ?? 'Route N/A'} · Vehicle {pair.vehicle ?? 'N/A'}
+                    </p>
+                  </div>
+                  <div class="counts">
+                    <span><strong>{pair.pickup_count}</strong> pickups</span>
+                    <span><strong>{pair.drop_count}</strong> drops</span>
+                  </div>
+                </header>
+
+                <div class="pair-body">
+                  <div class="timeline">
+                    <div class="timeline-item">
+                      <span class="label">Leave Yard</span>
+                      <span class="value">{formatTime(pair.lyard_time)}</span>
+                    </div>
+                    <div class="timeline-item">
+                      <span class="label">First Pickup</span>
+                      <span class="value">{pair.first_pick_address ? `${pair.first_pick_address}, ${pair.first_pick_city ?? ''}`.trim() : '—'}</span>
+                    </div>
+                    <div class="timeline-item">
+                      <span class="label">Last Drop</span>
+                      <span class="value">{pair.last_drop_address ? `${pair.last_drop_address}, ${pair.last_drop_city ?? ''}`.trim() : '—'}</span>
+                    </div>
+                    <div class="timeline-item">
+                      <span class="label">Return Yard</span>
+                      <span class="value">{formatTime(pair.ryard_time)}</span>
+                    </div>
+                  </div>
+
+                  <div class="metrics">
+                    <div class="metric">
+                      <span>Outbound</span>
+                      <strong>{formatMinutes(pair.outbound_minutes)}</strong>
+                    </div>
+                    <div class="metric">
+                      <span>Activity</span>
+                      <strong>{formatMinutes(pair.activity_minutes)}</strong>
+                    </div>
+                    <div class="metric">
+                      <span>Inbound</span>
+                      <strong>{formatMinutes(pair.inbound_minutes)}</strong>
+                    </div>
+                  </div>
+                </div>
+              </article>
+            {/each}
+          </div>
+        {/if}
+      </section>
+
+      <aside class="date-sidebar">
+        <div class="sidebar-header">
+          <h2>Service Dates</h2>
+          {#if loadingSummaries}
+            <div class="spinner small"></div>
+          {/if}
         </div>
-      {:else if pairsError}
-        <div class="error-banner" in:fade>
-          <p>{pairsError}</p>
+
+        {#if summaries.length === 0 && !loadingSummaries}
+          <p class="sidebar-empty">No paired dates available.</p>
+        {/if}
+
+        <ul>
+          {#each summaries as summary (summary.service_date)}
+            <li>
+              <button class:selected={summary.service_date === selectedDate} on:click={() => selectDate(summary.service_date)}>
+                <span class="date-label">{formatDateLabel(summary.service_date)}</span>
+                <span class="date-meta">{summary.pair_count} pairs</span>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      </aside>
+    </div>
+
+    <footer class="stats-bar" in:fade>
+      {#if selectedSummary}
+        <div class="stat">
+          <span>Date</span>
+          <strong>{formatDateLabel(selectedSummary.service_date)}</strong>
         </div>
-      {:else if pairs.length === 0}
-        <div class="empty-state" in:fade>
-          <h2>No trip pairs found</h2>
-          <p>Select a different date to view paired trip activity.</p>
+        <div class="stat">
+          <span>Total Pairs</span>
+          <strong>{selectedSummary.pair_count}</strong>
+        </div>
+        <div class="stat">
+          <span>Avg Outbound</span>
+          <strong>{formatMinutes(selectedSummary.average_outbound_minutes)}</strong>
+        </div>
+        <div class="stat">
+          <span>Avg Activity</span>
+          <strong>{formatMinutes(selectedSummary.average_activity_minutes)}</strong>
+        </div>
+        <div class="stat">
+          <span>Avg Inbound</span>
+          <strong>{formatMinutes(selectedSummary.average_inbound_minutes)}</strong>
         </div>
       {:else}
-        <div class="pairs-grid">
-          {#each pairs as pair (pair.service_date + '-' + pair.trip_id)}
-            <article class="pair-card" in:fade>
-              <header class="pair-header">
-                <div>
-                  <h2>Trip #{pair.trip_id}</h2>
-                  <p class="meta">
-                    {formatDateLabel(pair.service_date)} &middot; {pair.route ?? 'Route N/A'} &middot;
-                    Vehicle {pair.vehicle ?? 'N/A'}
-                  </p>
-                </div>
-                <div class="counts">
-                  <span><strong>{pair.pickup_count}</strong> pickups</span>
-                  <span><strong>{pair.drop_count}</strong> drops</span>
-                </div>
-              </header>
-
-              <div class="pair-body">
-                <div class="timeline">
-                  <div class="timeline-item">
-                    <span class="label">Leave Yard</span>
-                    <span class="value">{formatTime(pair.lyard_time)}</span>
-                  </div>
-                  <div class="timeline-item">
-                    <span class="label">First Pickup</span>
-                    <span class="value">
-                      {pair.first_pick_address
-                        ? `${pair.first_pick_address}, ${pair.first_pick_city ?? ''}`.trim()
-                        : '—'}
-                    </span>
-                  </div>
-                  <div class="timeline-item">
-                    <span class="label">Last Drop</span>
-                    <span class="value">
-                      {pair.last_drop_address
-                        ? `${pair.last_drop_address}, ${pair.last_drop_city ?? ''}`.trim()
-                        : '—'}
-                    </span>
-                  </div>
-                  <div class="timeline-item">
-                    <span class="label">Return Yard</span>
-                    <span class="value">{formatTime(pair.ryard_time)}</span>
-                  </div>
-                </div>
-
-                <div class="metrics">
-                  <div class="metric">
-                    <span>Outbound</span>
-                    <strong>{formatMinutes(pair.outbound_minutes)}</strong>
-                  </div>
-                  <div class="metric">
-                    <span>Activity</span>
-                    <strong>{formatMinutes(pair.activity_minutes)}</strong>
-                  </div>
-                  <div class="metric">
-                    <span>Inbound</span>
-                    <strong>{formatMinutes(pair.inbound_minutes)}</strong>
-                  </div>
-                </div>
-              </div>
-            </article>
-          {/each}
-        </div>
+        <p>Select a date to view statistics.</p>
       {/if}
-    </section>
-
-    <aside class="date-sidebar">
-      <div class="sidebar-header">
-        <h2>Service Dates</h2>
-        {#if loadingSummaries}
-          <div class="spinner small"></div>
-        {/if}
-      </div>
-
-      {#if summaries.length === 0 && !loadingSummaries}
-        <p class="sidebar-empty">No paired dates available.</p>
-      {/if}
-
-      <ul>
-        {#each summaries as summary (summary.service_date)}
-          <li>
-            <button
-              class:selected={summary.service_date === selectedDate}
-              on:click={() => selectDate(summary.service_date)}
-            >
-              <span class="date-label">{formatDateLabel(summary.service_date)}</span>
-              <span class="date-meta">{summary.pair_count} pairs</span>
-            </button>
-          </li>
-        {/each}
-      </ul>
-    </aside>
+    </footer>
   </div>
-
-  <footer class="stats-bar" in:fade>
-    {#if selectedSummary}
-      <div class="stat">
-        <span>Date</span>
-        <strong>{formatDateLabel(selectedSummary.service_date)}</strong>
-      </div>
-      <div class="stat">
-        <span>Total Pairs</span>
-        <strong>{selectedSummary.pair_count}</strong>
-      </div>
-      <div class="stat">
-        <span>Avg Outbound</span>
-        <strong>{formatMinutes(selectedSummary.average_outbound_minutes)}</strong>
-      </div>
-      <div class="stat">
-        <span>Avg Activity</span>
-        <strong>{formatMinutes(selectedSummary.average_activity_minutes)}</strong>
-      </div>
-      <div class="stat">
-        <span>Avg Inbound</span>
-        <strong>{formatMinutes(selectedSummary.average_inbound_minutes)}</strong>
-      </div>
-    {:else}
-      <p>Select a date to view statistics.</p>
-    {/if}
-  </footer>
-</div>
+</PageShell>
 
 <style>
   .trip-pairs-page {
     display: flex;
     flex-direction: column;
-    height: 100vh;
-    background: #f8fafc;
+    min-height: calc(100vh - 240px);
+    background: transparent;
   }
 
   .content-wrapper {
     flex: 1;
     display: flex;
-    overflow: hidden;
+    gap: 1.25rem;
   }
 
   .pair-list {
     flex: 1;
     padding: 1.5rem;
     overflow-y: auto;
+    background: var(--color-card);
+    border: 1px solid var(--color-border);
+    border-radius: 1rem;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.04);
   }
 
   .page-header h1 {
     margin: 0;
-    font-size: 1.8rem;
-    color: #111827;
+    font-size: 1.6rem;
+    color: var(--color-foreground);
   }
 
   .page-header p {
     margin: 0.35rem 0 0;
-    color: #4b5563;
+    color: var(--color-muted-foreground);
     font-size: 0.95rem;
   }
 
@@ -287,6 +256,7 @@
     border-radius: 0.75rem;
     background: rgba(248, 113, 113, 0.15);
     color: #991b1b;
+    border: 1px solid rgba(248, 113, 113, 0.4);
   }
 
   .loading-state,
@@ -298,10 +268,6 @@
     gap: 0.75rem;
     padding: 3rem 0;
     color: #4b5563;
-  }
-
-  .loading-state p {
-    margin: 0;
   }
 
   .spinner {
@@ -320,133 +286,96 @@
 
   .pairs-grid {
     display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: 1rem;
-    margin-top: 1.5rem;
   }
 
   .pair-card {
-    background: white;
-    border-radius: 1rem;
-    padding: 1.25rem;
-    border: 1px solid #e5e7eb;
-    box-shadow: 0 10px 25px rgba(15, 23, 42, 0.04);
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
+    border: 1px solid var(--color-border);
+    border-radius: 0.9rem;
+    padding: 1rem;
+    background: var(--color-card);
+    box-shadow: 0 10px 25px rgba(0,0,0,0.03);
   }
 
   .pair-header {
     display: flex;
-    flex-wrap: wrap;
     justify-content: space-between;
     gap: 0.75rem;
   }
 
-  .pair-header h2 {
-    margin: 0;
-    font-size: 1.2rem;
-    color: #1f2937;
-  }
-
-  .pair-header .meta {
+  .meta {
+    color: var(--color-muted-foreground);
     margin: 0.25rem 0 0;
-    color: #6b7280;
-    font-size: 0.85rem;
+    font-size: 0.9rem;
   }
 
   .counts {
     display: flex;
-    gap: 0.75rem;
-    align-items: center;
-    color: #4338ca;
-  }
-
-  .counts strong {
-    font-size: 1.1rem;
-  }
-
-  .pair-body {
-    display: grid;
-    gap: 1.25rem;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  }
-
-  .timeline {
-    display: flex;
     flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .timeline-item {
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 0.65rem 0.75rem;
-    background: #f1f5f9;
-    border-radius: 0.65rem;
+    gap: 0.25rem;
+    color: var(--color-muted-foreground);
     font-size: 0.9rem;
   }
 
+  .timeline {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.5rem;
+    margin: 0.75rem 0;
+  }
+
+  .timeline-item {
+    background: var(--color-muted);
+    border-radius: 0.6rem;
+    padding: 0.6rem 0.75rem;
+  }
+
   .timeline-item .label {
-    font-weight: 600;
-    color: #1f2937;
+    display: block;
+    color: var(--color-muted-foreground);
+    font-size: 0.85rem;
   }
 
   .timeline-item .value {
-    color: #475569;
-    text-align: right;
+    font-weight: 600;
   }
 
   .metrics {
-    display: flex;
-    gap: 0.75rem;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.5rem;
   }
 
   .metric {
-    flex: 1;
-    min-width: 120px;
-    padding: 0.75rem;
-    border-radius: 0.75rem;
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(99, 102, 241, 0.05));
+    background: var(--color-muted);
+    border-radius: 0.6rem;
+    padding: 0.6rem 0.75rem;
     display: flex;
     flex-direction: column;
-    gap: 0.3rem;
-  }
-
-  .metric span {
-    color: #4338ca;
-    font-size: 0.8rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .metric strong {
-    color: #1f2937;
-    font-size: 1rem;
+    gap: 0.25rem;
   }
 
   .date-sidebar {
-    width: 280px;
-    border-left: 1px solid #e5e7eb;
-    background: #ffffff;
-    display: flex;
-    flex-direction: column;
-    padding: 1.5rem 1rem;
+    width: clamp(260px, 26vw, 360px);
+    border: 1px solid var(--color-border);
+    border-radius: 1rem;
+    padding: 1rem;
+    background: var(--color-card);
+    box-shadow: 0 10px 25px rgba(0,0,0,0.03);
     overflow-y: auto;
-    gap: 1rem;
+    max-height: calc(100vh - 240px);
   }
 
   .sidebar-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    margin-bottom: 0.75rem;
   }
 
-  .sidebar-header h2 {
-    margin: 0;
-    font-size: 1rem;
-    color: #1f2937;
+  .sidebar-empty {
+    color: var(--color-muted-foreground);
   }
 
   .date-sidebar ul {
@@ -460,89 +389,54 @@
 
   .date-sidebar button {
     width: 100%;
+    border: 1px solid var(--color-border);
+    background: var(--color-muted);
+    border-radius: 0.6rem;
+    padding: 0.65rem 0.75rem;
     text-align: left;
-    padding: 0.75rem;
-    border: 1px solid transparent;
-    border-radius: 0.75rem;
-    background: #f8fafc;
-    color: #0f172a;
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    transition: all 0.2s ease;
     cursor: pointer;
-  }
-
-  .date-sidebar button:hover {
-    border-color: rgba(99, 102, 241, 0.4);
-    background: white;
-    box-shadow: 0 8px 20px rgba(99, 102, 241, 0.12);
+    transition: border-color 0.2s ease, background-color 0.2s ease;
   }
 
   .date-sidebar button.selected {
-    border-color: #6366f1;
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.14), white);
-    box-shadow: 0 12px 25px rgba(79, 70, 229, 0.14);
+    border-color: var(--color-primary);
+    background: var(--color-primary) / 5;
   }
 
   .date-label {
+    display: block;
     font-weight: 600;
-    font-size: 0.9rem;
   }
 
   .date-meta {
-    font-size: 0.8rem;
-    color: #4b5563;
-  }
-
-  .sidebar-empty {
-    color: #6b7280;
-    font-size: 0.9rem;
+    display: block;
+    color: var(--color-muted-foreground);
+    font-size: 0.85rem;
   }
 
   .stats-bar {
-    padding: 0.85rem 1.5rem;
-    background: #111827;
-    color: white;
-    display: flex;
-    gap: 1.5rem;
-    align-items: center;
-    justify-content: center;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--color-border);
+    border-radius: 0.8rem;
+    background: var(--color-card);
+    box-shadow: 0 10px 20px rgba(0,0,0,0.02);
+    margin-top: 1rem;
   }
 
-  .stats-bar .stat {
-    display: flex;
-    flex-direction: column;
-    text-align: center;
-    gap: 0.25rem;
-    min-width: 120px;
+  .stat span {
+    color: var(--color-muted-foreground);
+    font-size: 0.85rem;
   }
 
-  .stats-bar span {
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: rgba(255, 255, 255, 0.7);
-  }
-
-  .stats-bar strong {
-    font-size: 1rem;
+  .stat strong {
+    display: block;
+    font-size: 1.05rem;
   }
 
   @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  @media (max-width: 1024px) {
-    .date-sidebar {
-      display: none;
-    }
-
-    .stats-bar {
-      justify-content: flex-start;
-    }
+    to { transform: rotate(360deg); }
   }
 </style>
