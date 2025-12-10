@@ -93,11 +93,21 @@ How can I assist you today?`,
     // Save as example functionality
     let savingAsExample = false;
     let showExampleForm = false;
+    let saveExampleSuccess = false;
     let exampleForm = {
       title: '',
       description: '',
+      category: 'general',
       tags: ''
     };
+
+    // Category options for examples
+    const exampleCategories = [
+      { value: 'booking', label: 'Booking' },
+      { value: 'eligibility', label: 'Eligibility' },
+      { value: 'transit', label: 'Transit' },
+      { value: 'general', label: 'General' }
+    ];
     
     // Example viewing functionality
     let isViewingExample = false;
@@ -106,7 +116,16 @@ How can I assist you today?`,
     let examplePlaybackPaused = false;
     let currentExampleIndex = 0; // Track current message index in example
     let totalExampleStates = 0; // Total number of states in current example
-    
+
+    // Enhanced replay state (for new replay endpoint)
+    let replayStates = []; // Full replay states from backend
+    let currentStateIndex = 0; // Current position in replay
+    let isAutoPlaying = false; // Whether auto-advance is active
+    let playbackSpeed = 1; // Playback speed multiplier (0.5, 1, 1.5, 2)
+    let autoPlayTimer = null; // Timer for auto-advance
+    let replayConfig = null; // Configuration from replay endpoint
+    let useTypewriterEffect = true; // Whether to use typewriter for AI messages
+
     // Typewriter effect state
     let typingMessages = new Set(); // Track which messages are currently typing
 
@@ -568,7 +587,7 @@ How can I assist you today?`,
         }
       });
       const interval = setInterval(checkServerHealth, 30000);
-      
+
       // Add keyboard shortcut for debug logging
       const handleKeydown = (e) => {
         if (e.ctrlKey && e.shiftKey && e.key === 'D') {
@@ -576,12 +595,17 @@ How can I assist you today?`,
           debugLogFullChatHistory();
         }
       };
-      
+
       window.addEventListener('keydown', handleKeydown);
-      
+
       return () => {
         clearInterval(interval);
         window.removeEventListener('keydown', handleKeydown);
+        // Clean up auto-play timer on component destroy
+        if (autoPlayTimer) {
+          clearInterval(autoPlayTimer);
+          autoPlayTimer = null;
+        }
       };
     });
   
@@ -831,14 +855,23 @@ How can I assist you today?`,
     async function applyConversationState(state) {
       try {
         console.log('Applying conversation state:', state);
-        
+
         // Handle providers state
-        if (state.providers) {
-          console.log('Applying provider state:', state.providers);
+        if (state.providers || state.origin || state.destination) {
+          console.log('Applying provider state:', state);
           console.log('Dispatching providersFound event...');
-          dispatch('providersFound', state.providers);
-          console.log('Provider event dispatched successfully');
-          
+          // Dispatch the full state object with providers, origin, destination, etc.
+          const providerData = {
+            data: state.providers || [],
+            source_address: state.source_address,
+            destination_address: state.destination_address,
+            origin: state.origin,
+            destination: state.destination,
+            public_transit: state.public_transit
+          };
+          dispatch('providersFound', providerData);
+          console.log('Provider event dispatched successfully with:', providerData);
+
           // For examples, we want providers to show immediately
           if (isViewingExample) {
             console.log('Example mode: Ensuring provider popup shows');
@@ -846,46 +879,330 @@ How can I assist you today?`,
         } else {
           console.log('No providers in state');
         }
-        
+
         // Skip map updates during example playback to prevent map resetting
         if (!isViewingExample) {
           // Handle map geocoding if needed
           if (state.mapState?.pendingGeocode) {
             console.log('Applying map state:', state.mapState.pendingGeocode);
             // Trigger address geocoding for map updates
-            dispatch('addressFound', { 
-              address: state.mapState.pendingGeocode.origin, 
-              messageRole: 'system' 
+            dispatch('addressFound', {
+              address: state.mapState.pendingGeocode.origin,
+              messageRole: 'system'
             });
-            
+
             // Small delay before destination
             setTimeout(() => {
-              dispatch('addressFound', { 
-                address: state.mapState.pendingGeocode.destination, 
-                messageRole: 'system' 
+              dispatch('addressFound', {
+                address: state.mapState.pendingGeocode.destination,
+                messageRole: 'system'
               });
             }, 500);
           }
-          
+
           // Handle individual addresses
           if (state.addresses && state.addresses.length > 0) {
             console.log('Found addresses in state:', state.addresses);
             // Could emit address events for additional map updates if needed
           }
         }
-        
+
       } catch (error) {
         console.error('Error applying conversation state:', error);
       }
     }
+
+    // ============================================
+    // Enhanced Replay Functions (new replay endpoint)
+    // ============================================
+
+    /**
+     * Load example replay from the new /conversations/{id}/replay endpoint
+     * @param {Object} replayData - The replay data from backend containing states and config
+     */
+    export async function loadExampleReplay(replayData) {
+      try {
+        console.log('Loading example replay:', replayData);
+
+        // Stop any existing auto-play
+        stopAutoPlay();
+
+        // Reset state
+        isViewingExample = true;
+        isLoadingExample = true;
+        messages = [];
+        replayStates = replayData.states || [];
+        replayConfig = replayData.config || {};
+        currentStateIndex = 0;
+        currentExample = replayData.example || null;
+        totalExampleStates = replayStates.length;
+
+        // Apply config defaults
+        useTypewriterEffect = replayConfig.typewriter_effect !== false;
+        const baseDelayMs = replayConfig.delay_ms || 1500;
+
+        // Clear conversation state
+        conversationId = null;
+        error = null;
+
+        // Clear service zones and pings
+        serviceZoneManager.clearAllServiceZones();
+        visibleProviderZones.clear();
+        loadingProviderZones.clear();
+
+        // Apply first state if available
+        if (replayStates.length > 0) {
+          await applyReplayState(replayStates[0]);
+          currentStateIndex = 1;
+        }
+
+        isLoadingExample = false;
+
+        // Auto-start playback if configured
+        if (replayConfig.auto_advance) {
+          startAutoPlay(baseDelayMs);
+        }
+
+      } catch (err) {
+        console.error('Error loading example replay:', err);
+        error = `Failed to load example replay: ${err.message}`;
+        isLoadingExample = false;
+        throw err;
+      }
+    }
+
+    /**
+     * Apply a single replay state to the UI
+     * @param {Object} state - The replay state containing message, ui_hints, providers, etc.
+     */
+    async function applyReplayState(state) {
+      try {
+        console.log('Applying replay state:', state);
+
+        // Add message to UI if present
+        if (state.message) {
+          const message = state.message;
+          const messageId = message.id || `replay-${currentStateIndex}-${Date.now()}`;
+
+          // Only add non-system messages with content
+          if (message.role !== 'system' && message.content && message.content.trim() !== '') {
+            const messageWithId = {
+              ...message,
+              id: messageId,
+              _useTypewriter: useTypewriterEffect && message.role === 'ai'
+            };
+            messages = [...messages, messageWithId];
+          }
+        }
+
+        // Apply UI hints
+        if (state.ui_hints) {
+          await applyUIHints(state.ui_hints);
+        }
+
+        // Apply provider data with full structure including coordinates
+        if (state.providers || state.state_snapshot?.providers || state.state_snapshot?.origin) {
+          const snapshot = state.state_snapshot || state;
+          console.log('Dispatching providers from replay state:', snapshot);
+          const providerData = {
+            data: snapshot.providers || [],
+            source_address: snapshot.source_address,
+            destination_address: snapshot.destination_address,
+            origin: snapshot.origin,
+            destination: snapshot.destination,
+            public_transit: snapshot.public_transit
+          };
+          dispatch('providersFound', providerData);
+        }
+
+        // Apply service zones
+        if (state.service_zones && Array.isArray(state.service_zones)) {
+          for (const zone of state.service_zones) {
+            if (zone.geoJson) {
+              serviceZoneManager.addServiceZone({
+                type: zone.type || 'provider',
+                geoJson: zone.geoJson,
+                label: zone.label || 'Service Zone',
+                description: zone.description || '',
+                metadata: zone.metadata || {},
+                config: zone.config || {}
+              }, false);
+            }
+          }
+        }
+
+        // Apply map pings
+        if (state.pings && Array.isArray(state.pings)) {
+          for (const ping of state.pings) {
+            dispatch('addPing', ping);
+          }
+        }
+
+        // Apply map action (pan, zoom, focus)
+        if (state.map_action) {
+          dispatch('mapAction', state.map_action);
+        }
+
+        scrollToBottom();
+
+      } catch (err) {
+        console.error('Error applying replay state:', err);
+      }
+    }
+
+    /**
+     * Apply UI hints from replay state
+     * @param {Object} hints - UI hints object
+     */
+    async function applyUIHints(hints) {
+      if (!hints) return;
+
+      // Show providers panel
+      if (hints.show_providers) {
+        // Provider display is handled by providersFound event
+        console.log('UI hint: show_providers');
+      }
+
+      // Focus map on area
+      if (hints.map_action) {
+        dispatch('mapAction', hints.map_action);
+      }
+
+      // Highlight specific elements
+      if (hints.highlight) {
+        console.log('UI hint: highlight', hints.highlight);
+        // Could add visual highlights to specific UI elements
+      }
+    }
+
+    // ============================================
+    // Auto-Play Control Functions
+    // ============================================
+
+    /**
+     * Start auto-advancing through replay states
+     * @param {number} delayMs - Delay between states in milliseconds (before speed multiplier)
+     */
+    function startAutoPlay(delayMs = 1500) {
+      if (isAutoPlaying) return;
+      if (currentStateIndex >= replayStates.length) return;
+
+      isAutoPlaying = true;
+      const effectiveDelay = delayMs / playbackSpeed;
+
+      autoPlayTimer = setInterval(async () => {
+        if (!isAutoPlaying || currentStateIndex >= replayStates.length) {
+          stopAutoPlay();
+          return;
+        }
+        await advanceReplay();
+      }, effectiveDelay);
+
+      console.log(`Auto-play started with ${effectiveDelay}ms delay (speed: ${playbackSpeed}x)`);
+    }
+
+    /**
+     * Stop auto-advancing through replay states
+     */
+    function stopAutoPlay() {
+      if (autoPlayTimer) {
+        clearInterval(autoPlayTimer);
+        autoPlayTimer = null;
+      }
+      isAutoPlaying = false;
+      console.log('Auto-play stopped');
+    }
+
+    /**
+     * Advance to the next replay state
+     */
+    async function advanceReplay() {
+      if (currentStateIndex >= replayStates.length) {
+        stopAutoPlay();
+        return;
+      }
+
+      const state = replayStates[currentStateIndex];
+      await applyReplayState(state);
+      currentStateIndex++;
+
+      // Stop auto-play if we've reached the end
+      if (currentStateIndex >= replayStates.length) {
+        stopAutoPlay();
+      }
+    }
+
+    /**
+     * Jump to a specific state index (requires replaying from beginning)
+     * @param {number} targetIndex - The index to jump to
+     */
+    async function jumpToState(targetIndex) {
+      if (targetIndex < 0 || targetIndex >= replayStates.length) return;
+
+      // Stop auto-play during jump
+      const wasAutoPlaying = isAutoPlaying;
+      stopAutoPlay();
+
+      // Reset and replay up to target index
+      messages = [];
+      serviceZoneManager.clearAllServiceZones();
+      visibleProviderZones.clear();
+
+      // Replay states up to and including target
+      for (let i = 0; i <= targetIndex; i++) {
+        await applyReplayState(replayStates[i]);
+      }
+
+      currentStateIndex = targetIndex + 1;
+
+      // Resume auto-play if it was active
+      if (wasAutoPlaying && currentStateIndex < replayStates.length) {
+        const baseDelay = replayConfig?.delay_ms || 1500;
+        startAutoPlay(baseDelay);
+      }
+    }
+
+    /**
+     * Toggle auto-play on/off
+     */
+    function toggleAutoPlay() {
+      if (isAutoPlaying) {
+        stopAutoPlay();
+      } else {
+        const baseDelay = replayConfig?.delay_ms || 1500;
+        startAutoPlay(baseDelay);
+      }
+    }
+
+    /**
+     * Change playback speed and restart auto-play if active
+     * @param {number} speed - New speed multiplier
+     */
+    function setPlaybackSpeed(speed) {
+      playbackSpeed = speed;
+      if (isAutoPlaying) {
+        stopAutoPlay();
+        const baseDelay = replayConfig?.delay_ms || 1500;
+        startAutoPlay(baseDelay);
+      }
+    }
     
     export function startNewConversation() {
+      // Stop auto-play if active
+      stopAutoPlay();
+
       isViewingExample = false;
       isLoadingExample = false;
       examplePlaybackPaused = false;
       currentExample = null;
       currentExampleIndex = 0;
       totalExampleStates = 0;
+
+      // Reset enhanced replay state
+      replayStates = [];
+      currentStateIndex = 0;
+      replayConfig = null;
+
       conversationId = null;
       messages = [{
         role: 'ai',
@@ -940,18 +1257,22 @@ How can I assist you today?`,
         return;
       }
       showExampleForm = true;
+      saveExampleSuccess = false;
       exampleForm = {
         title: '',
         description: '',
+        category: 'general',
         tags: ''
       };
     }
 
     function closeExampleForm() {
       showExampleForm = false;
+      saveExampleSuccess = false;
       exampleForm = {
         title: '',
         description: '',
+        category: 'general',
         tags: ''
       };
     }
@@ -965,21 +1286,20 @@ How can I assist you today?`,
       error = null;
 
       try {
-        const tags = exampleForm.tags 
+        const tags = exampleForm.tags
           ? exampleForm.tags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0)
           : [];
 
-                const response = await fetch(`${CHAT_API_BASE}/conversations/${conversationId}/add-to-examples`, {
+        const response = await fetch(`${CHAT_API_BASE}/conversations/${conversationId}/save-as-example`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            conversation_id: conversationId,
             title: exampleForm.title || null,
             description: exampleForm.description || null,
-            tags: tags,
-            is_active: true
+            category: exampleForm.category,
+            tags: tags
           })
         });
 
@@ -990,18 +1310,10 @@ How can I assist you today?`,
 
         const exampleData = await response.json();
         console.log('Chat example saved:', exampleData);
-        
-        // Show success message
-        const successMessage = {
-          role: 'system',
-          content: `✅ This conversation has been saved as an example${exampleForm.title ? ': "' + exampleForm.title + '"' : ''}!`,
-          id: `success-${Date.now()}`
-        };
-        messages = [...messages, successMessage];
-        scrollToBottom();
-        
-        closeExampleForm();
-        
+
+        // Show success state in modal
+        saveExampleSuccess = true;
+
       } catch (e) {
         error = `Error saving example: ${e.message}`;
         console.error('Error saving chat example:', e);
@@ -1010,31 +1322,62 @@ How can I assist you today?`,
       }
     }
 
-</script> 
+</script>
   <div class="flex flex-col h-full bg-background">
     <!-- Top status bar -->
-    {#if !serverOnline || isViewingExample}
-      <div class="flex-shrink-0 border-b border-border/40 px-3 py-2 bg-muted/30">
-        {#if !serverOnline}
-          <div class="flex items-center gap-2">
+    <div class="flex-shrink-0 border-b border-border/40 px-3 py-2 bg-muted/30">
+      <div class="flex items-center justify-between">
+        <!-- Left side: status indicators -->
+        <div class="flex items-center gap-2">
+          {#if !serverOnline}
             <div class="w-2 h-2 rounded-full bg-destructive"></div>
             <span class="text-xs text-muted-foreground">Chat server offline</span>
-          </div>
-        {:else if isViewingExample}
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <span class="text-xs text-muted-foreground">📖 Viewing Example</span>
-            </div>
+          {:else if isViewingExample}
+            <span class="text-xs text-muted-foreground">Viewing Example</span>
+          {:else if conversationId}
+            <div class="w-2 h-2 rounded-full bg-green-500"></div>
+            <span class="text-xs text-muted-foreground">Active conversation</span>
+          {:else}
+            <div class="w-2 h-2 rounded-full bg-yellow-500 animate-pulse"></div>
+            <span class="text-xs text-muted-foreground">Initializing...</span>
+          {/if}
+        </div>
+
+        <!-- Right side: action buttons -->
+        <div class="flex items-center gap-2">
+          {#if isViewingExample}
             <button
               on:click={startNewConversation}
               class="text-xs text-primary hover:text-primary/80 transition"
             >
               New Chat
             </button>
-          </div>
-        {/if}
+          {:else if conversationId && !isViewingExample}
+            <!-- Save as Example button -->
+            <button
+              on:click={openExampleForm}
+              class="save-example-btn group flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-md transition-all duration-200"
+              title="Save as Example"
+            >
+              <svg
+                class="w-3.5 h-3.5 transition-transform group-hover:scale-110"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"
+                />
+              </svg>
+              <span class="hidden sm:inline">Save as Example</span>
+            </button>
+          {/if}
+        </div>
       </div>
-    {/if}
+    </div>
   
     <!-- Chat messages -->
     <div class="flex-1 overflow-y-auto px-3 py-3 space-y-3 chat-messages scroll-smooth">
@@ -1195,33 +1538,115 @@ How can I assist you today?`,
         {/if}
       </form>
     {:else}
-      <!-- Continue button for example viewing -->
+      <!-- Enhanced Playback Controls for example viewing -->
       <div class="flex-shrink-0 border-t border-border/40 bg-card px-3 py-3">
-        <div class="flex justify-end">
-          {#if currentExampleIndex < totalExampleStates}
-            <button
-              on:click={continueExamplePlayback}
-              class="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition text-sm font-medium flex items-center gap-2"
-            >
-              <span>Continue</span>
-              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-              </svg>
-            </button>
-          {:else}
-            <div class="text-sm text-muted-foreground italic">
-              Example completed
+        {#if replayStates.length > 0}
+          <!-- New replay endpoint controls -->
+          <div class="flex flex-col gap-2">
+            <!-- Progress bar and state counter -->
+            <div class="flex items-center gap-3">
+              <input
+                type="range"
+                min="0"
+                max={replayStates.length - 1}
+                bind:value={currentStateIndex}
+                on:change={() => jumpToState(currentStateIndex)}
+                on:input={(e) => { if (!isAutoPlaying) jumpToState(parseInt(e.target.value)); }}
+                class="flex-1 h-1.5 bg-muted rounded-lg appearance-none cursor-pointer accent-primary"
+                disabled={isAutoPlaying}
+              />
+              <span class="text-xs text-muted-foreground whitespace-nowrap min-w-[4rem] text-right">
+                {Math.min(currentStateIndex + 1, replayStates.length)} / {replayStates.length}
+              </span>
             </div>
-          {/if}
-        </div>
+
+            <!-- Playback controls row -->
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <!-- Play/Pause button -->
+                <button
+                  on:click={toggleAutoPlay}
+                  disabled={currentStateIndex >= replayStates.length}
+                  class="p-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                  title={isAutoPlaying ? 'Pause' : 'Play'}
+                >
+                  {#if isAutoPlaying}
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
+                    </svg>
+                  {:else}
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M8 5v14l11-7z"/>
+                    </svg>
+                  {/if}
+                </button>
+
+                <!-- Next button -->
+                <button
+                  on:click={advanceReplay}
+                  disabled={currentStateIndex >= replayStates.length || isAutoPlaying}
+                  class="p-2 rounded-lg bg-muted hover:bg-muted/80 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                  title="Next"
+                >
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                  </svg>
+                </button>
+
+                <!-- Speed selector -->
+                <select
+                  bind:value={playbackSpeed}
+                  on:change={(e) => setPlaybackSpeed(parseFloat(e.target.value))}
+                  class="text-xs bg-muted border-0 rounded-lg px-2 py-1.5 cursor-pointer focus:ring-1 focus:ring-primary"
+                >
+                  <option value={0.5}>0.5x</option>
+                  <option value={1}>1x</option>
+                  <option value={1.5}>1.5x</option>
+                  <option value={2}>2x</option>
+                </select>
+              </div>
+
+              <!-- Status indicator -->
+              <div class="flex items-center gap-2">
+                {#if currentStateIndex >= replayStates.length}
+                  <span class="text-xs text-muted-foreground italic">Example completed</span>
+                {:else if isAutoPlaying}
+                  <span class="text-xs text-primary flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 bg-primary rounded-full animate-pulse"></span>
+                    Playing
+                  </span>
+                {/if}
+              </div>
+            </div>
+          </div>
+        {:else}
+          <!-- Legacy playback controls (fallback for buildConversationStates) -->
+          <div class="flex justify-end">
+            {#if currentExampleIndex < totalExampleStates}
+              <button
+                on:click={continueExamplePlayback}
+                class="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition text-sm font-medium flex items-center gap-2"
+              >
+                <span>Continue</span>
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                </svg>
+              </button>
+            {:else}
+              <div class="text-sm text-muted-foreground italic">
+                Example completed
+              </div>
+            {/if}
+          </div>
+        {/if}
       </div>
     {/if}
 
     <!-- Save as Example Modal -->
     {#if showExampleForm}
       <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-      <div 
-        class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" 
+      <div
+        class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[9999]"
         on:click={closeExampleForm}
         on:keydown={(e) => {
           if (e.key === 'Escape') {
@@ -1232,93 +1657,150 @@ How can I assist you today?`,
         aria-modal="true"
         aria-labelledby="modal-title"
         tabindex="0"
+        transition:fade={{ duration: 150 }}
       >
         <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-        <div 
-          class="bg-white rounded-lg p-6 w-full max-w-md mx-4" 
+        <div
+          class="bg-card border border-border rounded-xl shadow-xl p-6 w-full max-w-md mx-4"
           on:click|stopPropagation
           on:keydown|stopPropagation
           role="document"
+          in:fly={{ y: 20, duration: 200 }}
         >
-          <div class="flex justify-between items-center mb-4">
-            <h3 id="modal-title" class="text-lg font-semibold text-gray-900">Save as Example</h3>
-            <button 
-              on:click={closeExampleForm} 
-              class="text-gray-400 hover:text-gray-600"
-              aria-label="Close modal"
-            >
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-              </svg>
-            </button>
-          </div>
-          
-          <form on:submit|preventDefault={saveAsExample} class="space-y-4">
-            <div>
-              <label for="example-title" class="block text-sm font-medium text-gray-700 mb-1">
-                Title (optional)
-              </label>
-              <input
-                id="example-title"
-                type="text"
-                bind:value={exampleForm.title}
-                placeholder="e.g., Booking a ride to Target"
-                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-              />
-            </div>
-            
-            <div>
-              <label for="example-description" class="block text-sm font-medium text-gray-700 mb-1">
-                Description (optional)
-              </label>
-              <textarea
-                id="example-description"
-                bind:value={exampleForm.description}
-                placeholder="What does this conversation demonstrate?"
-                rows="3"
-                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
-              ></textarea>
-            </div>
-            
-            <div>
-              <label for="example-tags" class="block text-sm font-medium text-gray-700 mb-1">
-                Tags (optional)
-              </label>
-              <input
-                id="example-tags"
-                type="text"
-                bind:value={exampleForm.tags}
-                placeholder="e.g., booking, ride, accessibility (comma-separated)"
-                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-              />
-              <p class="text-xs text-gray-500 mt-1">Separate multiple tags with commas</p>
-            </div>
-            
-            <div class="flex justify-end space-x-3 pt-4">
-              <button
-                type="button"
-                on:click={closeExampleForm}
-                class="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={savingAsExample}
-                class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center space-x-2"
-              >
-                {#if savingAsExample}
-                  <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                  <span>Saving...</span>
+          {#if saveExampleSuccess}
+            <!-- Success state -->
+            <div class="text-center py-4">
+              <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                <svg class="w-8 h-8 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>
+              </div>
+              <h3 class="text-lg font-semibold text-foreground mb-2">Example Saved!</h3>
+              <p class="text-sm text-muted-foreground mb-6">
+                {#if exampleForm.title}
+                  "{exampleForm.title}" has been saved to your examples.
                 {:else}
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                  </svg>
-                  <span>Save Example</span>
+                  This conversation has been saved as an example.
                 {/if}
+              </p>
+              <div class="flex justify-center gap-3">
+                <button
+                  on:click={closeExampleForm}
+                  class="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          {:else}
+            <!-- Form state -->
+            <div class="flex justify-between items-center mb-4">
+              <div class="flex items-center gap-2">
+                <div class="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <svg class="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+                  </svg>
+                </div>
+                <h3 id="modal-title" class="text-lg font-semibold text-foreground">Save as Example</h3>
+              </div>
+              <button
+                on:click={closeExampleForm}
+                class="text-muted-foreground hover:text-foreground transition-colors rounded-lg p-1 hover:bg-muted"
+                aria-label="Close modal"
+              >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
               </button>
             </div>
-          </form>
+
+            <p class="text-sm text-muted-foreground mb-4">
+              Save this conversation as an example for training or demonstration purposes.
+            </p>
+
+            <form on:submit|preventDefault={saveAsExample} class="space-y-4">
+              <div>
+                <label for="example-title" class="block text-sm font-medium text-foreground mb-1.5">
+                  Title <span class="text-muted-foreground font-normal">(required)</span>
+                </label>
+                <input
+                  id="example-title"
+                  type="text"
+                  bind:value={exampleForm.title}
+                  placeholder="e.g., Finding transit providers in Walnut Creek"
+                  required
+                  class="w-full px-3 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary text-foreground placeholder:text-muted-foreground"
+                />
+              </div>
+
+              <div>
+                <label for="example-category" class="block text-sm font-medium text-foreground mb-1.5">
+                  Category
+                </label>
+                <select
+                  id="example-category"
+                  bind:value={exampleForm.category}
+                  class="w-full px-3 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary text-foreground cursor-pointer"
+                >
+                  {#each exampleCategories as cat}
+                    <option value={cat.value}>{cat.label}</option>
+                  {/each}
+                </select>
+              </div>
+
+              <div>
+                <label for="example-description" class="block text-sm font-medium text-foreground mb-1.5">
+                  Description <span class="text-muted-foreground font-normal">(optional)</span>
+                </label>
+                <textarea
+                  id="example-description"
+                  bind:value={exampleForm.description}
+                  placeholder="What does this conversation demonstrate?"
+                  rows="3"
+                  class="w-full px-3 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary text-foreground placeholder:text-muted-foreground resize-none"
+                ></textarea>
+              </div>
+
+              <div>
+                <label for="example-tags" class="block text-sm font-medium text-foreground mb-1.5">
+                  Tags <span class="text-muted-foreground font-normal">(optional)</span>
+                </label>
+                <input
+                  id="example-tags"
+                  type="text"
+                  bind:value={exampleForm.tags}
+                  placeholder="e.g., booking, accessibility, bart"
+                  class="w-full px-3 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary text-foreground placeholder:text-muted-foreground"
+                />
+                <p class="text-xs text-muted-foreground mt-1.5">Separate multiple tags with commas</p>
+              </div>
+
+              <div class="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  on:click={closeExampleForm}
+                  class="px-4 py-2 text-foreground bg-muted hover:bg-muted/80 rounded-lg transition-colors text-sm font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingAsExample || !exampleForm.title.trim()}
+                  class="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2 text-sm font-medium"
+                >
+                  {#if savingAsExample}
+                    <div class="animate-spin rounded-full h-4 w-4 border-2 border-primary-foreground border-t-transparent"></div>
+                    <span>Saving...</span>
+                  {:else}
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+                    </svg>
+                    <span>Save Example</span>
+                  {/if}
+                </button>
+              </div>
+            </form>
+          {/if}
         </div>
       </div>
     {/if}
@@ -1513,5 +1995,68 @@ How can I assist you today?`,
 
     :global(.dark) .chat-markdown :global(hr) {
       border-top-color: rgba(255, 255, 255, 0.1);
+    }
+
+    /* Playback slider styles */
+    input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    input[type="range"]::-webkit-slider-runnable-track {
+      height: 6px;
+      border-radius: 3px;
+      background: hsl(var(--muted));
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: hsl(var(--primary));
+      margin-top: -4px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+      transition: transform 0.1s ease;
+    }
+
+    input[type="range"]::-webkit-slider-thumb:hover {
+      transform: scale(1.1);
+    }
+
+    input[type="range"]::-moz-range-track {
+      height: 6px;
+      border-radius: 3px;
+      background: hsl(var(--muted));
+    }
+
+    input[type="range"]::-moz-range-thumb {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: hsl(var(--primary));
+      border: none;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+      transition: transform 0.1s ease;
+    }
+
+    input[type="range"]::-moz-range-thumb:hover {
+      transform: scale(1.1);
+    }
+
+    input[type="range"]:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    input[type="range"]:disabled::-webkit-slider-thumb {
+      background: hsl(var(--muted-foreground));
+    }
+
+    input[type="range"]:disabled::-moz-range-thumb {
+      background: hsl(var(--muted-foreground));
     }
   </style>

@@ -39,6 +39,8 @@
   let examplesError = null;
   let serverOnline = false;
   let chatComponent = null;
+  let openDropdownId = null; // Track which example's dropdown is open
+  let deletingExampleId = null; // Track which example is being deleted
 
   // Map configuration
   let mapCenter = [37.9020731, -122.0618702];
@@ -98,6 +100,46 @@
       chatExamples = [];
     } finally {
       loadingExamples = false;
+    }
+  }
+
+  async function deleteExample(exampleId, event) {
+    event.stopPropagation(); // Prevent card click
+    openDropdownId = null; // Close dropdown
+
+    if (!confirm('Are you sure you want to delete this example?')) {
+      return;
+    }
+
+    deletingExampleId = exampleId;
+    try {
+      const response = await fetch(`${CHAT_API_BASE}/chat-examples/${exampleId}`, {
+        method: 'DELETE'
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to delete: ${response.status}`);
+      }
+
+      // Remove from local list
+      chatExamples = chatExamples.filter(ex => ex.id !== exampleId);
+    } catch (error) {
+      console.error('Error deleting example:', error);
+      alert(`Failed to delete example: ${error.message}`);
+    } finally {
+      deletingExampleId = null;
+    }
+  }
+
+  function toggleDropdown(exampleId, event) {
+    event.stopPropagation(); // Prevent card click
+    openDropdownId = openDropdownId === exampleId ? null : exampleId;
+  }
+
+  // Close dropdown when clicking outside
+  function handleClickOutside(event) {
+    if (openDropdownId && !event.target.closest('.example-dropdown')) {
+      openDropdownId = null;
     }
   }
 
@@ -183,38 +225,66 @@
     pingManager.removePingsByType(PingTypes.SEARCH_RESULT);
     pingManager.removePingsByType(PingTypes.ORIGIN);
     pingManager.removePingsByType(PingTypes.DESTINATION);
-    if (providerData?.source_address && providerData?.destination_address) {
+    // Create pings if we have coordinates or addresses
+    if ((providerData?.origin && providerData?.destination) ||
+        (providerData?.source_address || providerData?.destination_address)) {
       await createProviderSearchPings();
     }
   }
 
   async function createProviderSearchPings() {
-    if (!providerData?.source_address || !providerData?.destination_address) return;
-    const [originCoords, destCoords] = await Promise.all([
-      geocodeAddress(providerData.source_address),
-      geocodeAddress(providerData.destination_address)
-    ]);
+    if (!providerData) return;
+
     const pingsToAdd = [];
-    if (originCoords) {
+
+    // Use pre-geocoded origin coordinates if available (from FASTAPI response)
+    if (providerData.origin?.lat && providerData.origin?.lon) {
       pingsToAdd.push({
         type: PingTypes.ORIGIN,
-        coordinates: originCoords,
+        coordinates: [providerData.origin.lat, providerData.origin.lon],
         label: 'Origin',
-        description: providerData.source_address,
+        description: providerData.source_address || 'Origin',
         metadata: { source: 'provider_search', address: providerData.source_address }
       });
+    } else if (providerData.source_address) {
+      // Fallback: geocode if coordinates not provided
+      const originCoords = await geocodeAddress(providerData.source_address);
+      if (originCoords) {
+        pingsToAdd.push({
+          type: PingTypes.ORIGIN,
+          coordinates: originCoords,
+          label: 'Origin',
+          description: providerData.source_address,
+          metadata: { source: 'provider_search', address: providerData.source_address }
+        });
+      }
     }
-    if (destCoords) {
+
+    // Use pre-geocoded destination coordinates if available (from FASTAPI response)
+    if (providerData.destination?.lat && providerData.destination?.lon) {
       pingsToAdd.push({
         type: PingTypes.DESTINATION,
-        coordinates: destCoords,
+        coordinates: [providerData.destination.lat, providerData.destination.lon],
         label: 'Destination',
-        description: providerData.destination_address,
+        description: providerData.destination_address || 'Destination',
         metadata: { source: 'provider_search', address: providerData.destination_address }
       });
+    } else if (providerData.destination_address) {
+      // Fallback: geocode if coordinates not provided
+      const destCoords = await geocodeAddress(providerData.destination_address);
+      if (destCoords) {
+        pingsToAdd.push({
+          type: PingTypes.DESTINATION,
+          coordinates: destCoords,
+          label: 'Destination',
+          description: providerData.destination_address,
+          metadata: { source: 'provider_search', address: providerData.destination_address }
+        });
+      }
     }
+
     if (pingsToAdd.length > 0) {
-      pingManager.addPings(pingsToAdd, false);
+      pingManager.addPings(pingsToAdd, true);  // true to focus map on pings
     }
   }
 
@@ -249,16 +319,34 @@
   async function viewChatExample(example) {
     try {
       pingManager.clearAllPings();
-      const [messagesResponse, toolCallsResponse] = await Promise.all([
-        fetch(`${CHAT_API_BASE}/conversations/${example.conversation_id}/messages`),
-        fetch(`${CHAT_API_BASE}/conversations/${example.conversation_id}/tool-calls`)
-      ]);
-      if (!messagesResponse.ok) throw new Error(`Failed to load conversation: ${messagesResponse.status}`);
-      if (!toolCallsResponse.ok) throw new Error(`Failed to load tool calls: ${toolCallsResponse.status}`);
-      const messagesData = await messagesResponse.json();
-      const toolCallsData = await toolCallsResponse.json();
-      const conversationStates = buildConversationStates(messagesData.messages, toolCallsData.tool_calls);
-      await chatComponent?.loadExampleWithStates?.(conversationStates, example);
+
+      // Try new replay endpoint first
+      const replayResponse = await fetch(`${CHAT_API_BASE}/conversations/${example.conversation_id}/replay`);
+
+      if (replayResponse.ok) {
+        // Use new replay endpoint
+        const replayData = await replayResponse.json();
+        console.log('Using new replay endpoint:', replayData);
+
+        // Add example metadata to replay data
+        replayData.example = example;
+
+        // Use the new loadExampleReplay function
+        await chatComponent?.loadExampleReplay?.(replayData);
+      } else {
+        // Fallback to legacy approach if replay endpoint not available
+        console.log('Replay endpoint not available, falling back to legacy approach');
+        const [messagesResponse, toolCallsResponse] = await Promise.all([
+          fetch(`${CHAT_API_BASE}/conversations/${example.conversation_id}/messages`),
+          fetch(`${CHAT_API_BASE}/conversations/${example.conversation_id}/tool-calls`)
+        ]);
+        if (!messagesResponse.ok) throw new Error(`Failed to load conversation: ${messagesResponse.status}`);
+        if (!toolCallsResponse.ok) throw new Error(`Failed to load tool calls: ${toolCallsResponse.status}`);
+        const messagesData = await messagesResponse.json();
+        const toolCallsData = await toolCallsResponse.json();
+        const conversationStates = buildConversationStates(messagesData.messages, toolCallsData.tool_calls);
+        await chatComponent?.loadExampleWithStates?.(conversationStates, example);
+      }
     } catch (error) {
       examplesError = `Failed to load example: ${error.message}`;
     }
@@ -643,17 +731,92 @@
                     <div class="text-sm text-muted-foreground">No examples available</div>
                   </div>
                 {:else}
-                  <div class="grid grid-cols-1 gap-2">
-                    {#each chatExamples as example}
-                      <button
-                        class="rounded-lg border border-border/70 bg-card px-3 py-3 text-left shadow-sm transition hover:border-primary/60 hover:bg-primary/5"
-                        on:click={() => viewChatExample(example)}
-                      >
-                        <div class="text-sm font-semibold mb-1">{example.title || 'Untitled Example'}</div>
-                        {#if example.description}
-                          <div class="text-xs text-muted-foreground line-clamp-2">{example.description}</div>
-                        {/if}
-                      </button>
+                  <!-- svelte-ignore a11y-click-events-have-key-events -->
+                  <!-- svelte-ignore a11y-no-static-element-interactions -->
+                  <!-- Horizontal scrolling card container -->
+                  <div
+                    class="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent"
+                    on:click={handleClickOutside}
+                  >
+                    {#each chatExamples as example, index}
+                      <div class="relative flex-shrink-0 w-48 snap-start">
+                        <!-- Three dots menu button -->
+                        <div class="example-dropdown absolute top-2 right-2 z-10">
+                          <button
+                            class="p-1 rounded-md hover:bg-muted/80 text-muted-foreground hover:text-foreground transition-colors"
+                            on:click={(e) => toggleDropdown(example.id, e)}
+                            aria-label="Example options"
+                          >
+                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                              <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+                            </svg>
+                          </button>
+
+                          <!-- Dropdown menu -->
+                          {#if openDropdownId === example.id}
+                            <div
+                              class="absolute right-0 top-full mt-1 w-32 rounded-md border border-border bg-popover shadow-lg z-20"
+                              transition:fade={{ duration: 100 }}
+                            >
+                              <button
+                                class="w-full px-3 py-2 text-left text-xs text-destructive hover:bg-destructive/10 rounded-md flex items-center gap-2 transition-colors"
+                                on:click={(e) => deleteExample(example.id, e)}
+                                disabled={deletingExampleId === example.id}
+                              >
+                                {#if deletingExampleId === example.id}
+                                  <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                  </svg>
+                                  <span>Deleting...</span>
+                                {:else}
+                                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                  </svg>
+                                  <span>Delete</span>
+                                {/if}
+                              </button>
+                            </div>
+                          {/if}
+                        </div>
+
+                        <!-- Card button -->
+                        <button
+                          class="w-full h-full rounded-xl border border-border/70 bg-gradient-to-br from-card to-muted/30 p-4 pt-8 text-left shadow-sm transition-all hover:shadow-md hover:border-primary/60 hover:scale-[1.02]"
+                          on:click={() => viewChatExample(example)}
+                        >
+                          <!-- Category badge -->
+                          {#if example.category}
+                            <div class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-primary/10 text-primary mb-2">
+                              {example.category}
+                            </div>
+                          {:else}
+                            <div class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-muted text-muted-foreground mb-2">
+                              Example {index + 1}
+                            </div>
+                          {/if}
+
+                          <!-- Title -->
+                          <div class="text-sm font-semibold text-foreground mb-1.5 line-clamp-2 leading-tight">
+                            {example.title || 'Untitled Example'}
+                          </div>
+
+                          <!-- Description -->
+                          {#if example.description}
+                            <div class="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+                              {example.description}
+                            </div>
+                          {/if}
+
+                          <!-- Play indicator -->
+                          <div class="mt-3 flex items-center gap-1.5 text-[10px] text-primary/70">
+                            <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd" />
+                            </svg>
+                            <span>Click to play</span>
+                          </div>
+                        </button>
+                      </div>
                     {/each}
                   </div>
                 {/if}
@@ -729,5 +892,27 @@
     font-size: 12px;
     color: #6b7280;
     margin-bottom: 2px;
+  }
+
+  /* Custom scrollbar for horizontal example cards */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    height: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 3px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.5);
   }
 </style>
