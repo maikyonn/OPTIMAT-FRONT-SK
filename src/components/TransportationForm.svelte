@@ -65,12 +65,43 @@
     }
   ];
 
+  // Filter options based on database values
+  const scheduleTypeOptions = [
+    { value: '', label: 'All Schedule Types' },
+    { value: 'fixed-schedules', label: 'Fixed Schedules' },
+    { value: 'in-advance-book', label: 'Book in Advance' },
+    { value: 'real-time-book', label: 'Real-time Booking' }
+  ];
+
+  const eligibilityTypeOptions = [
+    { value: '', label: 'All Eligibility Types' },
+    { value: 'Senior', label: 'Seniors (60+)' },
+    { value: 'Disabled', label: 'Disabled / ADA' },
+    { value: 'Veteran', label: 'Veterans' },
+    { value: 'Resident', label: 'Area Residents' }
+  ];
+
+  const providerTypeOptions = [
+    { value: '', label: 'All Provider Types' },
+    { value: 'ADA-para', label: 'ADA Paratransit' },
+    { value: 'para', label: 'Paratransit' },
+    { value: 'fix-route', label: 'Fixed Route' },
+    { value: 'volunteer-driver', label: 'Volunteer Driver' },
+    { value: 'city', label: 'City Service' },
+    { value: 'community', label: 'Community Service' },
+    { value: 'discount-program', label: 'Discount Program' },
+    { value: 'special-TNC', label: 'Special TNC' }
+  ];
+
   // Update formData to use first predefined origin and destination as default
   let formData = {
     departureTime: formatDateTimeLocal(now),
     returnTime: formatDateTimeLocal(fourHoursLater),
     originAddress: predefinedOrigins[0].address,
-    destinationAddress: predefinedDestinations[0].address
+    destinationAddress: predefinedDestinations[0].address,
+    scheduleType: '',
+    eligibilityType: '',
+    providerType: ''
   };
 
   function handleSubmit() {
@@ -206,12 +237,12 @@
           >
             <div class="flex items-start space-x-3">
               <!-- Color indicator -->
-              <div 
+              <div
                 class="w-4 h-4 rounded-full flex-shrink-0 mt-1"
                 style={`background-color: ${provider._zone_color || '#3B82F6'}`}
                 title="Service zone color"
               ></div>
-              
+
               <!-- Service details -->
               <div class="flex-1">
                 <h4 class="font-medium text-gray-900">{provider.provider_name}</h4>
@@ -268,7 +299,7 @@
                     <div class="flex">
                       <dt class="font-medium w-24">Website:</dt>
                       <dd>
-                        <a href={provider.website} target="_blank" rel="noopener noreferrer" 
+                        <a href={provider.website} target="_blank" rel="noopener noreferrer"
                            class="text-blue-600 hover:underline">
                           Visit website
                         </a>
@@ -398,6 +429,53 @@
               {/each}
             </select>
           </div>
+        </div>
+      </CardContent>
+    </Card>
+
+    <!-- Filter Options -->
+    <Card class="shadow-sm border-border/60">
+      <CardHeader class="pb-2">
+        <CardTitle class="text-sm font-medium text-muted-foreground">Filter Options</CardTitle>
+      </CardHeader>
+      <CardContent class="space-y-3">
+        <div class="space-y-1">
+          <label for="eligibilityType" class="block text-sm font-medium text-muted-foreground">Eligibility</label>
+          <select
+            id="eligibilityType"
+            bind:value={formData.eligibilityType}
+            class="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {#each eligibilityTypeOptions as option}
+              <option value={option.value}>{option.label}</option>
+            {/each}
+          </select>
+        </div>
+
+        <div class="space-y-1">
+          <label for="scheduleType" class="block text-sm font-medium text-muted-foreground">Schedule Type</label>
+          <select
+            id="scheduleType"
+            bind:value={formData.scheduleType}
+            class="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {#each scheduleTypeOptions as option}
+              <option value={option.value}>{option.label}</option>
+            {/each}
+          </select>
+        </div>
+
+        <div class="space-y-1">
+          <label for="providerType" class="block text-sm font-medium text-muted-foreground">Provider Type</label>
+          <select
+            id="providerType"
+            bind:value={formData.providerType}
+            class="mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {#each providerTypeOptions as option}
+              <option value={option.value}>{option.label}</option>
+            {/each}
+          </select>
         </div>
       </CardContent>
     </Card>

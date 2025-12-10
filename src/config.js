@@ -23,7 +23,12 @@ function normalizePrefix(prefix) {
 }
 
 // If API_URL already embeds the providers prefix, avoid doubling it.
+// For local dev (direct to FastAPI), no prefix needed.
+// For production (via nginx), use /api-providers prefix.
 function defaultProvidersPrefix() {
+  // Local dev: FastAPI runs at root, no prefix needed
+  if (isLocal) return '';
+
   try {
     const url = new URL(API_URL);
     const path = url.pathname.replace(/\/+$/, '');
@@ -35,10 +40,12 @@ function defaultProvidersPrefix() {
 }
 
 const rawPrefix = import.meta.env.VITE_API_PREFIX;
+// If VITE_API_PREFIX is explicitly set (even to empty string), use it.
+// Only fall back to defaultProvidersPrefix() when undefined.
 const effectivePrefix =
-  rawPrefix === undefined
-    ? defaultProvidersPrefix()
-    : rawPrefix || '/api-providers';
+  rawPrefix !== undefined
+    ? rawPrefix
+    : defaultProvidersPrefix();
 
 export const PROVIDERS_API_PREFIX = normalizePrefix(effectivePrefix);
 

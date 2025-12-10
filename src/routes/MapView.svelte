@@ -2,7 +2,6 @@
   import { onMount, onDestroy } from 'svelte';
   import { fade } from 'svelte/transition';
   import TransportationForm from '../components/TransportationForm.svelte';
-  import ProviderResults from '../components/ProviderResults.svelte';
   import { Map, TileLayer, Marker, Popup, GeoJSON } from 'sveaflet';
   import { PROVIDERS_API_BASE } from '../config';
   import { pingManager, PingTypes, pings, mapFocus, visiblePings } from '../lib/pingManager.js';
@@ -130,10 +129,14 @@
     try {
       const apiUrl = `${API_BASE}/providers/filter`;
 
-      // Only send the required addresses to the filter endpoint
+      // Build request body with required addresses and optional filters
       const requestBody = {
         source_address: formData.originAddress,
-        destination_address: formData.destinationAddress
+        destination_address: formData.destinationAddress,
+        // Include optional filters only if they have values
+        ...(formData.eligibilityType && { eligibility_type: formData.eligibilityType }),
+        ...(formData.scheduleType && { schedule_type: formData.scheduleType }),
+        ...(formData.providerType && { provider_type: formData.providerType })
       };
       
       const response = await fetch(apiUrl, {
@@ -232,11 +235,8 @@
   >
     <!-- Main horizontal layout: Left (Map + Results) | Right (Form full height) -->
     <Resizable.PaneGroup direction="horizontal" class="flex-1 h-full">
-      <!-- Left: Nested vertical panels (Map top, Results bottom) -->
+      <!-- Left: Map Panel -->
       <Resizable.Pane defaultSize={65} minSize={40} class="relative">
-        <Resizable.PaneGroup direction="vertical" class="h-full">
-          <!-- Top: Map Panel -->
-          <Resizable.Pane defaultSize={responseData ? 60 : 100} minSize={40} class="relative">
             <div class="absolute inset-0" in:fade={{ duration: 400 }}>
               {#key mapKey}
                 <Map
@@ -327,34 +327,6 @@
                 </Map>
               {/key}
             </div>
-          </Resizable.Pane>
-
-          {#if responseData}
-            <Resizable.Handle withHandle />
-
-            <!-- Bottom: Results Panel -->
-            <Resizable.Pane defaultSize={40} minSize={20} class="flex flex-col overflow-hidden bg-card border-t border-border/40">
-              <!-- Results Header -->
-              <div class="flex-shrink-0 border-b border-border/40 px-3 py-2 bg-muted/30">
-                <div class="flex items-center justify-between">
-                  <span class="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                    Results ({responseData?.data?.length || 0})
-                  </span>
-                  <button
-                    class="text-xs text-muted-foreground hover:text-foreground"
-                    on:click={handleReturnToForm}
-                  >
-                    Clear
-                  </button>
-                </div>
-              </div>
-              <!-- Results Content -->
-              <div class="flex-1 overflow-y-auto p-3">
-                <ProviderResults {responseData} on:focusProvider={handleFocusProvider} />
-              </div>
-            </Resizable.Pane>
-          {/if}
-        </Resizable.PaneGroup>
       </Resizable.Pane>
 
       <Resizable.Handle withHandle />
