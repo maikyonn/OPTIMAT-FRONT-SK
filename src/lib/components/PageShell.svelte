@@ -15,6 +15,7 @@
     { label: 'Map', href: '/map', icon: '🗺️' },
     { label: 'Chat', href: '/chat', icon: '💬' },
     { label: 'Providers', href: '/providers-info', icon: '🏢' },
+    { label: 'Staff Portal', href: '/staff', icon: '👤' },
     { label: 'Trip Pairs', href: '/trip-pairs', icon: '📊' },
     { label: 'Beta Signup', href: '/beta-signup', icon: '✨' }
   ];
