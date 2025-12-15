@@ -1,16 +1,14 @@
 import MapView from './routes/MapView.svelte';
 import ChatView from './routes/ChatView.svelte';
 import BetaSignup from './routes/BetaSignup.svelte';
-import TripHistory from './routes/TripHistory.svelte';
 import TripRecordsCsv from './routes/TripRecordsCsv.svelte';
+import ProvidersInfo from './routes/ProvidersInfo.svelte';
+import StaffPortal from './routes/StaffPortal.svelte';
 
 const routes = {
   // Map interface (default)
   '/': MapView,
   '/map': MapView,
-
-  // Historical trip explorer
-  '/trip-history': TripHistory,
 
   // CSV paired trip records viewer (also the default /trip-pairs route)
   '/trip-pairs': TripRecordsCsv,
@@ -18,6 +16,12 @@ const routes = {
 
   // Chat interface with integrated examples
   '/chat': ChatView,
+
+  // Providers info management page
+  '/providers-info': ProvidersInfo,
+
+  // Staff portal for providers to edit their own information
+  '/staff': StaffPortal,
 
   // Beta signup page
   '/beta-signup': BetaSignup,

@@ -14,7 +14,7 @@
   const navItems = [
     { label: 'Map', href: '/map', icon: '🗺️' },
     { label: 'Chat', href: '/chat', icon: '💬' },
-    { label: 'Trip History', href: '/trip-history', icon: '🧭' },
+    { label: 'Providers', href: '/providers-info', icon: '🏢' },
     { label: 'Trip Pairs', href: '/trip-pairs', icon: '📊' },
     { label: 'Beta Signup', href: '/beta-signup', icon: '✨' }
   ];
