@@ -1,10 +1,10 @@
 <script>
   import { onMount } from 'svelte';
   import { fade, fly } from 'svelte/transition';
-  import { PROVIDERS_API_BASE } from '../config';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Textarea } from '$lib/components/ui/textarea';
+  import { getAllProviders, updateProvider } from '$lib/api';
 
   let mounted = false;
   let email = '';
@@ -34,12 +34,11 @@
     provider = null;
 
     try {
-      const response = await fetch(`${PROVIDERS_API_BASE}/providers`);
-      if (!response.ok) {
-        throw new Error(`Failed to load providers: ${response.status}`);
+      const { data, error } = await getAllProviders();
+      if (error) {
+        throw error;
       }
-      const result = await response.json();
-      const providers = result.data || result;
+      const providers = data || [];
 
       // Search for provider with matching email in contacts
       const emailLower = email.trim().toLowerCase();
@@ -128,20 +127,15 @@
         }
       });
 
-      const response = await fetch(`${PROVIDERS_API_BASE}/providers/${providerId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(updatePayload)
-      });
+      const { data: updatedProvider, error: updateError } = await updateProvider(providerId, updatePayload);
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: 'Failed to save provider' }));
-        throw new Error(errorData.detail || `Server error: ${response.status}`);
+      if (updateError) {
+        throw updateError;
       }
 
-      const updatedProvider = await response.json();
+      if (!updatedProvider) {
+        throw new Error('Failed to save provider - no data returned');
+      }
 
       provider = updatedProvider;
       editForm = { ...updatedProvider };

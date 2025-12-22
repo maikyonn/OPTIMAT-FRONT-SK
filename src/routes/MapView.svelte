@@ -3,11 +3,11 @@
   import { fade } from 'svelte/transition';
   import TransportationForm from '../components/TransportationForm.svelte';
   import { Map, TileLayer, Marker, Popup, GeoJSON } from 'sveaflet';
-  import { PROVIDERS_API_BASE } from '../config';
   import { pingManager, PingTypes, pings, mapFocus, visiblePings } from '../lib/pingManager.js';
   import { serviceZoneManager, ServiceZoneTypes, visibleServiceZones } from '../lib/serviceZoneManager.js';
   import * as Resizable from '$lib/components/ui/resizable/index.js';
   import PageShell from '$lib/components/PageShell.svelte';
+  import { geocodeAddress as apiGeocodeAddress, filterProviders } from '$lib/api';
 
   let loading = false;
   let error = null;
@@ -49,15 +49,10 @@
     }, 100);
   }
 
-  const API_BASE = PROVIDERS_API_BASE;
-
   async function geocodeAddress(address) {
     try {
-      const url = `${API_BASE}/providers/geocode?address=${encodeURIComponent(address)}`;
-      
-      const response = await fetch(url);
-      const data = await response.json();
-      
+      const data = await apiGeocodeAddress(address);
+
       if (data.success && data.coordinates) {
         const { longitude, latitude } = data.coordinates;
         return [latitude, longitude];
@@ -125,10 +120,8 @@
     loading = true;
     error = null;
     responseData = null;
-    
-    try {
-      const apiUrl = `${API_BASE}/providers/filter`;
 
+    try {
       // Build request body with required addresses and optional filters
       const requestBody = {
         source_address: formData.originAddress,
@@ -138,33 +131,24 @@
         ...(formData.scheduleType && { schedule_type: formData.scheduleType }),
         ...(formData.providerType && { provider_type: formData.providerType })
       };
-      
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody)
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
+
+      const { data, error: apiError } = await filterProviders(requestBody);
+
+      if (apiError) {
+        throw apiError;
       }
-      
-      const responseText = await response.text();
-      if (!responseText.trim()) {
+
+      if (!data) {
         throw new Error('Empty response from server');
       }
-      
-      const data = JSON.parse(responseText);
+
       responseData = data;
       formPosition = 'results';
-      
+
       // Clear existing provider pings and service zones
       pingManager.removePingsByType(PingTypes.PROVIDER);
       serviceZoneManager.clearAllServiceZones();
-      
+
       // Add provider location pings and service zones if available
       if (data && data.data && data.data.length > 0) {
         // Add provider location pings
@@ -177,7 +161,7 @@
             description: `${provider.provider_name}\nType: ${provider.provider_type}`,
             metadata: { provider }
           }));
-        
+
         if (providerPings.length > 0) {
           pingManager.addPings(providerPings, false);
         }
@@ -190,7 +174,7 @@
           const color = p._zone_color || serviceZoneManager.getProviderColor(p.id || p.provider_id);
           return { ...p, _zone_color: color };
         });
-        
+
         // Focus on both pings and service zones
         serviceZoneManager.focusOnZonesAndPings();
       }

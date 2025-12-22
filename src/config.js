@@ -1,6 +1,11 @@
 // API endpoints
 const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
 
+// Supabase configuration
+export const USE_SUPABASE = import.meta.env.VITE_USE_SUPABASE === 'true';
+export const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+export const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+
 // Default to the real API host; local uses FastAPI on 8001.
 const rawApiUrl =
   import.meta.env.VITE_API_URL ||

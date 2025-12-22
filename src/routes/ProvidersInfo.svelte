@@ -2,13 +2,13 @@
   import { onMount, onDestroy } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { Map, TileLayer, GeoJSON, Marker } from 'sveaflet';
-  import { PROVIDERS_API_BASE } from '../config';
   import { serviceZoneManager, visibleServiceZones } from '../lib/serviceZoneManager.js';
   import PageShell from '$lib/components/PageShell.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Textarea } from '$lib/components/ui/textarea';
   import * as Resizable from '$lib/components/ui/resizable/index.js';
+  import { getAllProviders, updateProvider } from '$lib/api';
 
   let mounted = false;
   let providers = [];
@@ -55,13 +55,11 @@
     loading = true;
     error = null;
     try {
-      const response = await fetch(`${PROVIDERS_API_BASE}/providers`);
-      if (!response.ok) {
-        throw new Error(`Failed to load providers: ${response.status}`);
+      const { data, error: apiError } = await getAllProviders();
+      if (apiError) {
+        throw apiError;
       }
-      const result = await response.json();
-      // API returns { data: [...] } structure
-      providers = result.data || result;
+      providers = data || [];
     } catch (err) {
       error = err.message;
       providers = [];
@@ -182,20 +180,15 @@
         }
       });
 
-      const response = await fetch(`${PROVIDERS_API_BASE}/providers/${providerId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(updatePayload)
-      });
+      const { data: updatedProvider, error: updateError } = await updateProvider(providerId, updatePayload);
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: 'Failed to save provider' }));
-        throw new Error(errorData.detail || `Server error: ${response.status}`);
+      if (updateError) {
+        throw updateError;
       }
 
-      const updatedProvider = await response.json();
+      if (!updatedProvider) {
+        throw new Error('Failed to save provider - no data returned');
+      }
 
       // Update the provider in the list
       providers = providers.map(p => {

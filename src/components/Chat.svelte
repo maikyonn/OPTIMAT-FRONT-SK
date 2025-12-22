@@ -1,9 +1,15 @@
 <script>
     import { onMount, createEventDispatcher } from 'svelte';
-    import { PROVIDERS_API_BASE, CHAT_API_URL } from '../config';
     import { fade, fly, slide } from 'svelte/transition';
     import { serviceZoneManager } from '../lib/serviceZoneManager.js';
     import { marked } from 'marked';
+    import {
+        checkChatHealth,
+        createConversation,
+        streamChatResponse,
+        saveConversationAsExample,
+        getProviderServiceZone,
+    } from '$lib/api';
 
     // Configure marked for safe rendering
     marked.setOptions({
@@ -17,8 +23,6 @@
         return marked.parse(content);
     }
 
-    const PROVIDER_API_BASE = PROVIDERS_API_BASE;
-    const CHAT_API_BASE = CHAT_API_URL;
     const dispatch = createEventDispatcher();
     
     // Typewriter effect component
@@ -411,28 +415,25 @@ How can I assist you today?`,
                     }
                 } else {
                     // Fallback: try to fetch from API if no service zone data
-                    const response = await fetch(`${PROVIDER_API_BASE}/providers/${providerId}/service-zone`);
-                    
-                    if (response.ok) {
-                        const zoneData = await response.json();
-                        if (zoneData.has_service_zone && zoneData.raw_data) {
-                            const serviceZoneData = {
-                                type: 'provider',
-                                geoJson: zoneData.raw_data,
-                                label: providerName,
-                                description: `${providerName} service area`,
-                                metadata: {
-                                    providerId: providerId,
-                                    provider: provider
-                                }
-                            };
-                            
-                            const zoneId = serviceZoneManager.addServiceZone(serviceZoneData, false);
-                            if (zoneId) {
-                                visibleProviderZones.add(providerId);
-                                // Focus on this specific provider's zone
-                                serviceZoneManager.focusOnServiceZone(zoneId);
+                    const { data: zoneData, error: zoneError } = await getProviderServiceZone(providerId);
+
+                    if (!zoneError && zoneData && zoneData.has_service_zone && zoneData.raw_data) {
+                        const serviceZoneData = {
+                            type: 'provider',
+                            geoJson: zoneData.raw_data,
+                            label: providerName,
+                            description: `${providerName} service area`,
+                            metadata: {
+                                providerId: providerId,
+                                provider: provider
                             }
+                        };
+
+                        const zoneId = serviceZoneManager.addServiceZone(serviceZoneData, false);
+                        if (zoneId) {
+                            visibleProviderZones.add(providerId);
+                            // Focus on this specific provider's zone
+                            serviceZoneManager.focusOnServiceZone(zoneId);
                         }
                     }
                 }
@@ -535,8 +536,7 @@ How can I assist you today?`,
 
     async function checkServerHealth() {
       try {
-        const response = await fetch(`${CHAT_API_BASE}/health`);
-        serverOnline = response.ok;
+        serverOnline = await checkChatHealth();
         if (!serverOnline) {
           error = "Chat server is currently offline.";
         }
@@ -550,20 +550,12 @@ How can I assist you today?`,
       initializing = true;
       error = null;
       try {
-        const response = await fetch(`${CHAT_API_BASE}/conversations`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ title: "New Chat via Frontend" }) // Backend expects a title
-        });
+        const { data: newConversation, error: apiError } = await createConversation("New Chat via Frontend");
 
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({ detail: "Failed to initialize conversation." }));
-          throw new Error(errorData.detail || `Server error: ${response.status}`);
+        if (apiError) {
+          throw apiError;
         }
 
-        const newConversation = await response.json();
         if (newConversation && newConversation.id) {
           conversationId = newConversation.id;
           console.log("Conversation initialized with ID:", conversationId);
@@ -638,77 +630,44 @@ How can I assist you today?`,
       let pendingAttachments = [];
 
       try {
-        const response = await fetch(`${CHAT_API_BASE}/stream`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            new_message: newMessage,
-            conversation_id: conversationId
-          })
-        });
+        // Use the new API module for streaming
+        for await (const event of streamChatResponse(conversationId, newMessage)) {
+          switch (event.event) {
+            case 'tool_start':
+              // Clear previous streaming text and show new tool
+              streamingMessage = '';
+              currentTool = { name: event.tool, status: 'running' };
+              scrollToBottom();
+              break;
 
-        if (!response.ok) {
-          throw new Error(`Server error: ${response.status}`);
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const event = JSON.parse(line.slice(6));
-
-                switch (event.event) {
-                  case 'tool_start':
-                    // Clear previous streaming text and show new tool
-                    streamingMessage = '';
-                    currentTool = { name: event.tool, status: 'running' };
-                    scrollToBottom();
-                    break;
-
-                  case 'tool_end':
-                    // Mark tool as done, it will be hidden when streaming resumes
-                    if (currentTool && currentTool.name === event.tool) {
-                      currentTool = { ...currentTool, status: 'done' };
-                    }
-                    break;
-
-                  case 'token':
-                    // Hide tool indicator when text starts streaming
-                    if (currentTool && currentTool.status === 'done') {
-                      currentTool = null;
-                    }
-                    streamingMessage += event.content;
-                    scrollToBottom();
-                    break;
-
-                  case 'message':
-                    // Final message received
-                    streamingMessage = event.content;
-                    break;
-
-                  case 'done':
-                    pendingAttachments = event.attachments || [];
-                    break;
-
-                  case 'error':
-                    error = event.message;
-                    break;
-                }
-              } catch (e) {
-                console.warn('Failed to parse SSE event:', line, e);
+            case 'tool_end':
+              // Mark tool as done, it will be hidden when streaming resumes
+              if (currentTool && currentTool.name === event.tool) {
+                currentTool = { ...currentTool, status: 'done' };
               }
-            }
+              break;
+
+            case 'token':
+              // Hide tool indicator when text starts streaming
+              if (currentTool && currentTool.status === 'done') {
+                currentTool = null;
+              }
+              streamingMessage += event.content;
+              scrollToBottom();
+              break;
+
+            case 'message':
+              // Final message received
+              streamingMessage = event.content;
+              break;
+
+            case 'done':
+              pendingAttachments = event.attachments || [];
+              break;
+
+            case 'error':
+              error = event.message;
+              break;
           }
         }
 
@@ -1290,25 +1249,20 @@ How can I assist you today?`,
           ? exampleForm.tags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0)
           : [];
 
-        const response = await fetch(`${CHAT_API_BASE}/conversations/${conversationId}/save-as-example`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            title: exampleForm.title || null,
-            description: exampleForm.description || null,
+        const { data: exampleData, error: apiError } = await saveConversationAsExample(
+          conversationId,
+          {
+            title: exampleForm.title || undefined,
+            description: exampleForm.description || undefined,
             category: exampleForm.category,
             tags: tags
-          })
-        });
+          }
+        );
 
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({ detail: "Failed to save example." }));
-          throw new Error(errorData.detail || `Server error: ${response.status}`);
+        if (apiError) {
+          throw apiError;
         }
 
-        const exampleData = await response.json();
         console.log('Chat example saved:', exampleData);
 
         // Show success state in modal

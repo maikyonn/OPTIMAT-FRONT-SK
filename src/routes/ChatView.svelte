@@ -6,12 +6,20 @@
   import ProviderResults from '../components/ProviderResults.svelte';
   import ProviderListPanel from '../components/ProviderListPanel.svelte';
   import { Map, TileLayer, Marker, GeoJSON, Polyline } from 'sveaflet';
-  import { PROVIDERS_API_BASE, CHAT_API_URL } from '../config';
   import { pingManager, PingTypes, pings } from '../lib/pingManager.js';
   import { serviceZoneManager, visibleServiceZones } from '../lib/serviceZoneManager.js';
   import PageShell from '$lib/components/PageShell.svelte';
   import { Button } from '$lib/components/ui/button';
   import * as Resizable from '$lib/components/ui/resizable/index.js';
+  import {
+    checkChatHealth,
+    geocodeAddress as apiGeocodeAddress,
+    listChatExamples,
+    deleteChatExample,
+    loadExampleReplayData,
+    getConversationMessages,
+    getConversationToolCalls
+  } from '$lib/api';
 
   let mounted = false;
   let showChat = false;
@@ -74,13 +82,9 @@
     }, 300);
   });
 
-  const PROVIDER_API_BASE = PROVIDERS_API_BASE;
-  const CHAT_API_BASE = CHAT_API_URL;
-
   async function checkServerHealth() {
     try {
-      const response = await fetch(`${CHAT_API_BASE}/health`);
-      serverOnline = response.ok;
+      serverOnline = await checkChatHealth();
       if (!serverOnline) examplesError = 'Chat server is currently offline.';
     } catch (e) {
       serverOnline = false;
@@ -92,9 +96,9 @@
     loadingExamples = true;
     examplesError = null;
     try {
-      const response = await fetch(`${CHAT_API_BASE}/chat-examples?is_active=true`);
-      if (!response.ok) throw new Error(`Failed to load examples: ${response.status}`);
-      chatExamples = await response.json();
+      const { data, error } = await listChatExamples(true);
+      if (error) throw error;
+      chatExamples = data || [];
     } catch (error) {
       examplesError = error.message;
       chatExamples = [];
@@ -113,12 +117,10 @@
 
     deletingExampleId = exampleId;
     try {
-      const response = await fetch(`${CHAT_API_BASE}/chat-examples/${exampleId}`, {
-        method: 'DELETE'
-      });
+      const { error } = await deleteChatExample(exampleId);
 
-      if (!response.ok) {
-        throw new Error(`Failed to delete: ${response.status}`);
+      if (error) {
+        throw error;
       }
 
       // Remove from local list
@@ -153,9 +155,7 @@
 
   async function geocodeAddress(address) {
     try {
-      const url = `${PROVIDER_API_BASE}/providers/geocode?address=${encodeURIComponent(address)}`;
-      const response = await fetch(url);
-      const data = await response.json();
+      const data = await apiGeocodeAddress(address);
       if (data.success && data.coordinates) {
         const { longitude, latitude } = data.coordinates;
         return [latitude, longitude];
@@ -321,11 +321,10 @@
       pingManager.clearAllPings();
 
       // Try new replay endpoint first
-      const replayResponse = await fetch(`${CHAT_API_BASE}/conversations/${example.conversation_id}/replay`);
+      const { data: replayData, error: replayError } = await loadExampleReplayData(example.conversation_id);
 
-      if (replayResponse.ok) {
+      if (!replayError && replayData) {
         // Use new replay endpoint
-        const replayData = await replayResponse.json();
         console.log('Using new replay endpoint:', replayData);
 
         // Add example metadata to replay data
@@ -336,15 +335,16 @@
       } else {
         // Fallback to legacy approach if replay endpoint not available
         console.log('Replay endpoint not available, falling back to legacy approach');
-        const [messagesResponse, toolCallsResponse] = await Promise.all([
-          fetch(`${CHAT_API_BASE}/conversations/${example.conversation_id}/messages`),
-          fetch(`${CHAT_API_BASE}/conversations/${example.conversation_id}/tool-calls`)
+        const [messagesResult, toolCallsResult] = await Promise.all([
+          getConversationMessages(example.conversation_id),
+          getConversationToolCalls(example.conversation_id)
         ]);
-        if (!messagesResponse.ok) throw new Error(`Failed to load conversation: ${messagesResponse.status}`);
-        if (!toolCallsResponse.ok) throw new Error(`Failed to load tool calls: ${toolCallsResponse.status}`);
-        const messagesData = await messagesResponse.json();
-        const toolCallsData = await toolCallsResponse.json();
-        const conversationStates = buildConversationStates(messagesData.messages, toolCallsData.tool_calls);
+        if (messagesResult.error) throw new Error(`Failed to load conversation: ${messagesResult.error.message}`);
+        if (toolCallsResult.error) throw new Error(`Failed to load tool calls: ${toolCallsResult.error.message}`);
+        const conversationStates = buildConversationStates(
+          messagesResult.data?.messages || [],
+          toolCallsResult.data?.tool_calls || []
+        );
         await chatComponent?.loadExampleWithStates?.(conversationStates, example);
       }
     } catch (error) {

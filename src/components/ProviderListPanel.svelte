@@ -1,14 +1,12 @@
 <script>
   import { onMount } from 'svelte';
-  import { PROVIDERS_API_BASE } from '../config';
   import { fly, fade } from 'svelte/transition';
   import { flip } from 'svelte/animate';
   import { serviceZoneManager } from '../lib/serviceZoneManager.js';
-  
-  const API_BASE = PROVIDERS_API_BASE;
+  import { getAllProviders } from '$lib/api';
 
   export let highlightedProviders = new Set(); // Provider IDs to highlight from chat results
-  
+
   let providers = [];
   let filteredProviders = [];
   let loading = true;
@@ -18,28 +16,28 @@
   let hoveredProviderId = null; // For tooltip on hover
   let hoverTimeout = null;
   let tooltipPosition = { x: 0, y: 0 };
-  
+
   // Service zone state
   let visibleZones = new Set();
   let loadingZones = new Set();
-  
+
   // Fetch all providers on mount
   onMount(async () => {
     await fetchProviders();
   });
-  
+
   async function fetchProviders() {
     loading = true;
     error = null;
-    
+
     try {
-      const response = await fetch(`${API_BASE}/providers/`);
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch providers: ${response.status}`);
+      const { data, error: apiError } = await getAllProviders();
+
+      if (apiError) {
+        throw apiError;
       }
-      
-      providers = await response.json();
+
+      providers = data || [];
       filteredProviders = providers;
       console.log(`Loaded ${providers.length} providers`);
     } catch (err) {
