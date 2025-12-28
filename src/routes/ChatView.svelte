@@ -316,6 +316,11 @@
     viewMode = 'chat';
   }
 
+  async function handleExampleSaved() {
+    // Refresh examples list so newly saved examples show up immediately.
+    await loadChatExamples();
+  }
+
   async function viewChatExample(example) {
     try {
       pingManager.clearAllPings();
@@ -700,7 +705,12 @@
                     </button>
                   {/each}
 
-                  {#if providerData.public_transit?.routes?.length > 0}
+                  {#if providerData.public_transit && (
+                    providerData.public_transit.journey_description ||
+                    providerData.public_transit.summary ||
+                    (providerData.public_transit.steps && providerData.public_transit.steps.length > 0) ||
+                    (providerData.public_transit.routes && providerData.public_transit.routes.length > 0)
+                  )}
                     <div class="rounded-lg border border-blue-200 bg-blue-50 p-3">
                       <div class="flex items-center gap-2 text-blue-700 text-sm font-medium">
                         <span>🚇</span>
@@ -846,6 +856,7 @@
             on:providersFound={handleProvidersFound}
             on:addressFound={handleAddressFound}
             on:newConversationStarted={handleNewConversationStarted}
+            on:exampleSaved={handleExampleSaved}
           />
         </div>
       </Resizable.Pane>

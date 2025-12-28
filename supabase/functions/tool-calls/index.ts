@@ -63,6 +63,17 @@ interface GetProviderInfoCall {
   created_at: string;
 }
 
+interface GeneralQuestionCall {
+  id: string;
+  conversation_id: string;
+  tool_call_id?: string;
+  question?: string;
+  search_results?: Record<string, unknown>;
+  sources?: Array<Record<string, unknown>>;
+  message_timestamp?: string;
+  created_at: string;
+}
+
 // Parse URL path
 function parseUrlPath(url: string): { isRecent: boolean } {
   const urlObj = new URL(url);
@@ -151,7 +162,7 @@ async function getAllToolCalls(
   origin: string | null
 ): Promise<Response> {
   // Fetch all tool call types in parallel
-  const [findProvidersResult, searchAddressesResult, getProviderInfoResult] = await Promise.all([
+  const [findProvidersResult, searchAddressesResult, getProviderInfoResult, generalQuestionResult] = await Promise.all([
     supabase
       .from(TABLES.FIND_PROVIDERS_CALLS)
       .select("*")
@@ -167,6 +178,11 @@ async function getAllToolCalls(
       .select("*")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true }),
+    supabase
+      .from(TABLES.GENERAL_QUESTION_CALLS)
+      .select("*")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: true }),
   ]);
 
   return jsonResponse(
@@ -176,6 +192,7 @@ async function getAllToolCalls(
         find_providers: (findProvidersResult.data || []).map((c) => sanitizeRecord(c)),
         search_addresses: (searchAddressesResult.data || []).map((c) => sanitizeRecord(c)),
         get_provider_info: (getProviderInfoResult.data || []).map((c) => sanitizeRecord(c)),
+        general_provider_question: (generalQuestionResult.data || []).map((c) => sanitizeRecord(c)),
       },
     },
     200,
@@ -204,6 +221,10 @@ async function getToolCallsByType(
       break;
     case "get_provider_info":
       tableName = TABLES.GET_PROVIDER_INFO_CALLS;
+      break;
+    case "general_provider_question":
+    case "general_question":
+      tableName = TABLES.GENERAL_QUESTION_CALLS;
       break;
     default:
       return errorResponse(`Unknown tool name: ${toolName}`, 400, origin);
@@ -241,7 +262,7 @@ async function getRecentToolCalls(
   origin: string | null
 ): Promise<Response> {
   // Fetch from all tables
-  const [findProvidersResult, searchAddressesResult, getProviderInfoResult] = await Promise.all([
+  const [findProvidersResult, searchAddressesResult, getProviderInfoResult, generalQuestionResult] = await Promise.all([
     supabase
       .from(TABLES.FIND_PROVIDERS_CALLS)
       .select("*")
@@ -256,6 +277,12 @@ async function getRecentToolCalls(
       .limit(limit),
     supabase
       .from(TABLES.GET_PROVIDER_INFO_CALLS)
+      .select("*")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: false })
+      .limit(limit),
+    supabase
+      .from(TABLES.GENERAL_QUESTION_CALLS)
       .select("*")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
@@ -305,6 +332,23 @@ async function getRecentToolCalls(
       result_data: call.provider_info,
       parameters: {
         provider_id: call.provider_id,
+      },
+      created_at: call.created_at,
+    });
+  }
+
+  for (const call of generalQuestionResult.data || []) {
+    allCalls.push({
+      id: call.id,
+      conversation_id: call.conversation_id,
+      tool_name: "general_provider_question",
+      result_data: {
+        query: call.question,
+        answer: (call.search_results as Record<string, unknown> | null)?.answer ?? null,
+        sources: call.sources || [],
+      },
+      parameters: {
+        question: call.question,
       },
       created_at: call.created_at,
     });

@@ -19,6 +19,10 @@
   export let providerData = null;
   export let show = false;
   export let embedded = false; // New prop for embedded mode
+
+  $: publicTransitDescription = providerData
+    ? getPublicTransitDescription(providerData.public_transit)
+    : null;
   
   // Local service zone state management
   let visibleZones = new Set();
@@ -142,6 +146,33 @@
     }
   }
 
+  function getPublicTransitDescription(publicTransit) {
+    if (!publicTransit) return null;
+
+    if (typeof publicTransit === 'string') {
+      const trimmed = publicTransit.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    }
+
+    const journeyDescription = publicTransit?.journey_description;
+    if (typeof journeyDescription === 'string' && journeyDescription.trim()) {
+      return journeyDescription.trim();
+    }
+
+    const parts = [];
+    if (typeof publicTransit?.summary === 'string' && publicTransit.summary.trim()) {
+      parts.push(publicTransit.summary.trim());
+    }
+    if (typeof publicTransit?.duration_text === 'string' && publicTransit.duration_text.trim()) {
+      parts.push(publicTransit.duration_text.trim());
+    }
+    if (typeof publicTransit?.distance_text === 'string' && publicTransit.distance_text.trim()) {
+      parts.push(publicTransit.distance_text.trim());
+    }
+
+    return parts.length > 0 ? parts.join(' · ') : null;
+  }
+
   function getProviderTypeLabel(type) {
     const types = {
       'ADA-para': 'ADA Paratransit',
@@ -249,7 +280,7 @@
           {/if}
           
           <!-- Public Transit Option -->
-          {#if providerData.public_transit && providerData.public_transit.journey_description}
+          {#if publicTransitDescription}
             <div class="bg-blue-50 rounded-lg p-4 text-sm border border-blue-200">
               <div class="flex items-start space-x-3">
                 <div class="flex-shrink-0">
@@ -259,7 +290,7 @@
                 </div>
                 <div class="flex-1">
                   <h4 class="font-medium text-gray-900 mb-2">Public Transit Option</h4>
-                  <p class="text-gray-700">{providerData.public_transit.journey_description}</p>
+                  <p class="text-gray-700">{publicTransitDescription}</p>
                 </div>
               </div>
             </div>

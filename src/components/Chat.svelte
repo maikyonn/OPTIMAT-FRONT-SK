@@ -23,6 +23,66 @@
         return marked.parse(content);
     }
 
+    function normalizeChatRole(role) {
+        const value = (role || '').toString().toLowerCase();
+        if (value === 'assistant' || value === 'ai') return 'ai';
+        if (value === 'user' || value === 'human') return 'human';
+        if (value === 'system') return 'system';
+        return role;
+    }
+
+    function normalizeReplayConfig(raw) {
+        const cfg = raw && typeof raw === 'object' ? raw : {};
+        return {
+            auto_advance: cfg.auto_advance ?? cfg.autoAdvance ?? false,
+            delay_ms: cfg.delay_ms ?? cfg.delayMs ?? 2000,
+            typewriter_effect: cfg.typewriter_effect ?? cfg.showTypewriter ?? true,
+            highlight_tool_calls: cfg.highlight_tool_calls ?? cfg.highlightToolCalls ?? true
+        };
+    }
+
+    function safeParseAttachmentData(value) {
+        if (typeof value !== 'string') return value;
+        try {
+            return JSON.parse(value);
+        } catch {
+            return value;
+        }
+    }
+
+    function getMessageAttachments(messageId) {
+        return messageAttachments.get(messageId) || [];
+    }
+
+    function getAddressPlaces(messageId) {
+        const attachments = getMessageAttachments(messageId);
+        const addressAttachment = attachments.find(att => att.type === 'address_search');
+        if (!addressAttachment?.data) return [];
+        const data = safeParseAttachmentData(addressAttachment.data) || {};
+        const places = Array.isArray(data.places) ? data.places : [];
+        return places.map((place) => ({
+            address: place?.formattedAddress || place?.address || '',
+            name: place?.displayName?.text || place?.name || '',
+            location: place?.location || null
+        })).filter((p) => p.address);
+    }
+
+    function openAddressPlace(place) {
+        if (!place?.address) return;
+        dispatch('addressFound', {
+            address: place.address,
+            messageRole: 'attachment_click',
+            placeName: place.name || null
+        });
+    }
+
+    function getAttachmentData(messageId, type) {
+        const attachments = getMessageAttachments(messageId);
+        const attachment = attachments.find(att => att.type === type);
+        if (!attachment?.data) return null;
+        return safeParseAttachmentData(attachment.data);
+    }
+
     const dispatch = createEventDispatcher();
     
     // Typewriter effect component
@@ -462,13 +522,19 @@ How can I assist you today?`,
         
         const addressAttachment = attachments.find(att => att.type === 'address_search');
         if (!addressAttachment || !addressAttachment.data) return null;
-        
-        const places = addressAttachment.data.places || [];
+
+        const data = safeParseAttachmentData(addressAttachment.data) || {};
+        const places = data.places || [];
         if (places.length === 0) return null;
-        
+
+        const firstPlace = places[0] || {};
+        const address = firstPlace.formattedAddress || firstPlace.address || null;
+        const name = firstPlace.displayName?.text || firstPlace.name || null;
+        if (!address) return null;
+
         return {
-            address: places[0].formattedAddress,
-            name: places[0].displayName?.text
+            address,
+            name
         };
     }
 
@@ -498,6 +564,18 @@ How can I assist you today?`,
                     providerPayload = { ...providerPayload, data: providerPayload.data.data };
                 }
                 if (!providerPayload) return;
+
+                // Normalize coordinates to the shape expected by the map view.
+                const origin =
+                    providerPayload.origin ||
+                    (providerPayload.source_coordinates?.lat !== undefined && providerPayload.source_coordinates?.lng !== undefined
+                        ? { lat: providerPayload.source_coordinates.lat, lon: providerPayload.source_coordinates.lng }
+                        : null);
+                const destination =
+                    providerPayload.destination ||
+                    (providerPayload.destination_coordinates?.lat !== undefined && providerPayload.destination_coordinates?.lng !== undefined
+                        ? { lat: providerPayload.destination_coordinates.lat, lon: providerPayload.destination_coordinates.lng }
+                        : null);
                 
                 // Clear existing service zones when showing new provider results
                 serviceZoneManager.clearAllServiceZones();
@@ -505,7 +583,7 @@ How can I assist you today?`,
                 loadingProviderZones.clear();
                 
                 // Process provider data and add to service zone manager
-                const providerData = providerPayload;
+                const providerData = { ...providerPayload, origin, destination };
                 if (Array.isArray(providerData.data) && providerData.data.length > 0) {
                     // Add all provider service zones to the manager (but don't focus yet)
                     serviceZoneManager.addProviderServiceZones(providerData.data, false);
@@ -518,17 +596,20 @@ How can I assist you today?`,
             // Handle address attachments - only for recent messages to show location on map
             const addressAttachment = attachments.find(att => att.type === 'address_search');
             if (addressAttachment && addressAttachment.data && isRecentMessage) {
-                const places = addressAttachment.data.places || [];
+                const data = safeParseAttachmentData(addressAttachment.data) || {};
+                const places = data.places || [];
                 if (places.length > 0) {
                     const firstPlace = places[0];
-                    const address = firstPlace.formattedAddress;
+                    const address = firstPlace.formattedAddress || firstPlace.address;
                     
                     // Emit address found event to show on map
-                    dispatch('addressFound', {
-                        address: address,
-                        messageRole: 'attachment_click',
-                        placeName: firstPlace.displayName?.text || null
-                    });
+                    if (address) {
+                        dispatch('addressFound', {
+                            address: address,
+                            messageRole: 'attachment_click',
+                            placeName: firstPlace.displayName?.text || firstPlace.name || null
+                        });
+                    }
                 }
             }
         }
@@ -751,10 +832,11 @@ How can I assist you today?`,
       while (currentExampleIndex < conversationStates.length) {
         const stateSnapshot = conversationStates[currentExampleIndex];
         const message = stateSnapshot.message;
+        const normalizedRole = normalizeChatRole(message.role);
         
         // Skip system messages and empty AI messages
-        if (message.role === 'system' || 
-            (message.role === 'ai' && (!message.content || message.content.trim() === ''))) {
+        if (normalizedRole === 'system' || 
+            (normalizedRole === 'ai' && (!message.content || message.content.trim() === ''))) {
           // Process message state but don't display the message
           await applyConversationState(stateSnapshot.state);
           currentExampleIndex++;
@@ -763,6 +845,7 @@ How can I assist you today?`,
           // This is a user message or AI message with content - display it and stop
           const messageWithId = {
             ...message,
+            role: normalizedRole,
             id: message.id || `example-${currentExampleIndex}-${Date.now()}`
           };
           messages = [...messages, messageWithId];
@@ -797,6 +880,7 @@ How can I assist you today?`,
         conversationId = null;
         error = null;
         messages = []; // Clear all messages first
+        messageAttachments = new Map();
         
         // Load the first message
         await continueExamplePlayback();
@@ -890,8 +974,9 @@ How can I assist you today?`,
         isViewingExample = true;
         isLoadingExample = true;
         messages = [];
+        messageAttachments = new Map();
         replayStates = replayData.states || [];
-        replayConfig = replayData.config || {};
+        replayConfig = normalizeReplayConfig(replayData.config || replayData.replay_config || replayData.replayConfig);
         currentStateIndex = 0;
         currentExample = replayData.example || null;
         totalExampleStates = replayStates.length;
@@ -941,16 +1026,24 @@ How can I assist you today?`,
         // Add message to UI if present
         if (state.message) {
           const message = state.message;
+          const normalizedRole = normalizeChatRole(message.role);
           const messageId = message.id || `replay-${currentStateIndex}-${Date.now()}`;
 
           // Only add non-system messages with content
-          if (message.role !== 'system' && message.content && message.content.trim() !== '') {
+          if (normalizedRole !== 'system' && message.content && message.content.trim() !== '') {
             const messageWithId = {
               ...message,
+              role: normalizedRole,
               id: messageId,
-              _useTypewriter: useTypewriterEffect && message.role === 'ai'
+              _useTypewriter: useTypewriterEffect && normalizedRole === 'ai'
             };
             messages = [...messages, messageWithId];
+
+            // Attach tool results when replay data includes them.
+            if (normalizedRole === 'ai' && Array.isArray(state.attachments) && state.attachments.length > 0) {
+              messageAttachments.set(messageId, state.attachments);
+              messageAttachments = messageAttachments;
+            }
           }
         }
 
@@ -1028,8 +1121,8 @@ How can I assist you today?`,
       }
 
       // Highlight specific elements
-      if (hints.highlight) {
-        console.log('UI hint: highlight', hints.highlight);
+      if (hints.highlight_tool || hints.highlight) {
+        console.log('UI hint: highlight', hints.highlight_tool || hints.highlight);
         // Could add visual highlights to specific UI elements
       }
     }
@@ -1178,6 +1271,7 @@ How can I assist you today?`,
 How can I assist you today?`,
         id: 'new-conversation-greeting'
       }];
+      messageAttachments = new Map();
       
       // Clear service zones when starting new conversation
       serviceZoneManager.clearAllServiceZones();
@@ -1264,6 +1358,7 @@ How can I assist you today?`,
         }
 
         console.log('Chat example saved:', exampleData);
+        dispatch('exampleSaved', { example: exampleData });
 
         // Show success state in modal
         saveExampleSuccess = true;
@@ -1363,6 +1458,96 @@ How can I assist you today?`,
               <div class="text-sm chat-markdown">
                 {@html renderMarkdown(message.content)}
               </div>
+
+              {#if hasAttachments(message.id)}
+                {@const providerSummary = getProviderSummary(message.id)}
+                {@const addressPlaces = getAddressPlaces(message.id)}
+                {@const providerInfo = getAttachmentData(message.id, 'provider_info')}
+                {@const webSearch = getAttachmentData(message.id, 'web_search')}
+
+                <div class="mt-3 space-y-2">
+                  {#if providerSummary}
+                    <div class="rounded-lg border border-border/60 bg-background/60 px-3 py-2">
+                      <div class="flex items-center justify-between gap-3">
+                        <div class="text-xs text-muted-foreground">
+                          Providers found: <span class="font-medium text-foreground">{providerSummary.count}</span>
+                        </div>
+                        <button
+                          type="button"
+                          class="text-xs px-2 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/15 transition"
+                          disabled={isViewingExample}
+                          on:click={() => handleMessageClick(message.id)}
+                        >
+                          Open results
+                        </button>
+                      </div>
+                      {#if providerSummary.sourceAddress || providerSummary.destinationAddress}
+                        <div class="mt-1 text-[11px] text-muted-foreground line-clamp-2">
+                          {providerSummary.sourceAddress} → {providerSummary.destinationAddress}
+                        </div>
+                      {/if}
+                    </div>
+                  {/if}
+
+                  {#if addressPlaces.length > 0}
+                    <div class="rounded-lg border border-border/60 bg-background/60 px-3 py-2">
+                      <div class="text-xs text-muted-foreground mb-1">Addresses</div>
+                      <div class="flex flex-col gap-1">
+                        {#each addressPlaces.slice(0, 3) as place (place.address)}
+                          <button
+                            type="button"
+                            class="text-left text-xs px-2 py-1 rounded-md bg-muted/60 hover:bg-muted transition"
+                            on:click={() => openAddressPlace(place)}
+                          >
+                            {#if place.name}
+                              <div class="font-medium text-foreground line-clamp-1">{place.name}</div>
+                              <div class="text-[11px] text-muted-foreground line-clamp-1">{place.address}</div>
+                            {:else}
+                              <div class="text-foreground line-clamp-2">{place.address}</div>
+                            {/if}
+                          </button>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
+
+                  {#if providerInfo}
+                    <details class="rounded-lg border border-border/60 bg-background/60 px-3 py-2">
+                      <summary class="cursor-pointer text-xs text-muted-foreground select-none">
+                        Provider details
+                      </summary>
+                      <pre class="mt-2 text-[11px] whitespace-pre-wrap break-words text-muted-foreground">{JSON.stringify(providerInfo, null, 2)}</pre>
+                    </details>
+                  {/if}
+
+                  {#if webSearch}
+                    <details class="rounded-lg border border-border/60 bg-background/60 px-3 py-2">
+                      <summary class="cursor-pointer text-xs text-muted-foreground select-none">
+                        Web search
+                      </summary>
+                      {#if typeof webSearch === 'object' && webSearch?.answer}
+                        <div class="mt-2 text-xs text-foreground whitespace-pre-wrap">{webSearch.answer}</div>
+                        {#if Array.isArray(webSearch.sources) && webSearch.sources.length > 0}
+                          <div class="mt-2 space-y-1">
+                            {#each webSearch.sources.slice(0, 5) as source, idx (source.url || `${idx}`)}
+                              <a
+                                class="block text-[11px] text-primary hover:underline line-clamp-1"
+                                href={source.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                {source.title || source.url}
+                              </a>
+                            {/each}
+                          </div>
+                        {/if}
+                      {:else}
+                        <pre class="mt-2 text-[11px] whitespace-pre-wrap break-words text-muted-foreground">{JSON.stringify(webSearch, null, 2)}</pre>
+                      {/if}
+                    </details>
+                  {/if}
+                </div>
+              {/if}
             {/if}
           </div>
 

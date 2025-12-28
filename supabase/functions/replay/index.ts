@@ -52,6 +52,7 @@ interface ConversationState {
   message: Record<string, unknown>;
   state_snapshot: StateSnapshot;
   ui_hints: UIHints;
+  attachments?: Array<Record<string, unknown>>;
 }
 
 interface ConversationReplay {
@@ -310,6 +311,12 @@ async function generateReplayStates(
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: true });
 
+  const { data: generalQuestionCalls } = await supabase
+    .from(TABLES.GENERAL_QUESTION_CALLS)
+    .select("*")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: true });
+
   // Build tool calls timeline
   interface ToolCallEntry {
     type: string;
@@ -341,6 +348,15 @@ async function generateReplayStates(
   for (const call of getProviderInfoCalls || []) {
     toolCalls.push({
       type: "get_provider_info",
+      id: call.id,
+      created_at: call.created_at,
+      data: call,
+    });
+  }
+
+  for (const call of generalQuestionCalls || []) {
+    toolCalls.push({
+      type: "general_question",
       id: call.id,
       created_at: call.created_at,
       data: call,
@@ -405,6 +421,16 @@ async function generateReplayStates(
           cumulativeState.destination = providerData.destination as Record<string, unknown>;
         }
 
+        // Fall back to coordinates produced by the tool, if present.
+        const sourceCoords = providerData.source_coordinates as Record<string, unknown> | undefined;
+        const destCoords = providerData.destination_coordinates as Record<string, unknown> | undefined;
+        if (!cumulativeState.origin && sourceCoords?.lat !== undefined && sourceCoords?.lng !== undefined) {
+          cumulativeState.origin = { lat: sourceCoords.lat, lon: sourceCoords.lng } as Record<string, unknown>;
+        }
+        if (!cumulativeState.destination && destCoords?.lat !== undefined && destCoords?.lng !== undefined) {
+          cumulativeState.destination = { lat: destCoords.lat, lon: destCoords.lng } as Record<string, unknown>;
+        }
+
         // Extract service zones
         const serviceZones: Array<Record<string, unknown>> = [];
         for (const provider of providers) {
@@ -442,6 +468,8 @@ async function generateReplayStates(
             unknown
           >;
         }
+      } else if (call.type === "general_question") {
+        // Web search results are exposed via attachments / ui_hints on the specific message state.
       }
     }
 
@@ -459,6 +487,7 @@ async function generateReplayStates(
     const newFindProviders = applicableCalls.some((c) => c.type === "find_providers");
     const newSearchAddresses = applicableCalls.some((c) => c.type === "search_addresses");
     const newGetProviderInfo = applicableCalls.some((c) => c.type === "get_provider_info");
+    const newGeneralQuestion = applicableCalls.some((c) => c.type === "general_question");
 
     if (role === "assistant" || role === "ai") {
       if (newFindProviders) {
@@ -513,6 +542,21 @@ async function generateReplayStates(
           }
         }
       }
+
+      if (newGeneralQuestion) {
+        if (!uiHints.highlight_tool) uiHints.highlight_tool = "general_provider_question";
+
+        for (const call of applicableCalls) {
+          if (call.type === "general_question") {
+            const data = call.data as Record<string, unknown>;
+            uiHints.new_data.web_search = {
+              query: data.question,
+              answer: (data.search_results as Record<string, unknown> | null)?.answer ?? null,
+              sources: data.sources ?? [],
+            };
+          }
+        }
+      }
     }
 
     // Determine map focus based on addresses
@@ -525,6 +569,49 @@ async function generateReplayStates(
     // Mark calls as processed
     for (const call of applicableCalls) {
       processedToolCalls.add(call.id);
+    }
+
+    const attachments: Array<Record<string, unknown>> = [];
+    if (role === "assistant" || role === "ai") {
+      for (const call of applicableCalls) {
+        const data = call.data as Record<string, unknown>;
+
+        if (call.type === "find_providers" && data.provider_data) {
+          attachments.push({
+            type: "provider_search",
+            data: data.provider_data,
+            metadata: { tool_name: "find_providers" },
+          });
+        }
+
+        if (call.type === "search_addresses" && data.places_data) {
+          attachments.push({
+            type: "address_search",
+            data: data.places_data,
+            metadata: { tool_name: "search_addresses_from_user_query" },
+          });
+        }
+
+        if (call.type === "get_provider_info" && data.provider_info) {
+          attachments.push({
+            type: "provider_info",
+            data: data.provider_info,
+            metadata: { tool_name: "get_provider_info", provider_id: data.provider_id ?? null },
+          });
+        }
+
+        if (call.type === "general_question") {
+          attachments.push({
+            type: "web_search",
+            data: {
+              query: data.question,
+              answer: (data.search_results as Record<string, unknown> | null)?.answer ?? null,
+              sources: data.sources ?? [],
+            },
+            metadata: { tool_name: "general_provider_question" },
+          });
+        }
+      }
     }
 
     // Create state
@@ -548,6 +635,7 @@ async function generateReplayStates(
         service_zones: [...cumulativeState.service_zones],
       },
       ui_hints: uiHints,
+      attachments: attachments.length > 0 ? attachments : undefined,
     });
   }
 
