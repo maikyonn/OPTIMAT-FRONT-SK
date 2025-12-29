@@ -27,7 +27,7 @@
     />
 
     {#if overlayMode === 'segments'}
-      {#each overlaySegments as segment (segment.id)}
+      {#each overlaySegments as segment, i (`${segment.id ?? 'segment'}-${i}`)}
         <Polyline
           latLngs={[segment.origin, segment.destination]}
           options={{
@@ -39,7 +39,7 @@
         />
       {/each}
     {:else if overlayMode === 'driving'}
-      {#each drivingRoutes as route (route.trip_id)}
+      {#each drivingRoutes as route, i (`${route.trip_id ?? 'route'}-${i}`)}
         <Polyline
           latLngs={route.coordinates}
           options={{
@@ -75,7 +75,7 @@
         />
       {/each}
     {:else if overlayMode === 'transit'}
-      {#each transitRoutes as route (route.trip_id)}
+      {#each transitRoutes as route, i (`${route.trip_id ?? 'route'}-${i}`)}
         <Polyline
           latLngs={route.coordinates}
           options={{

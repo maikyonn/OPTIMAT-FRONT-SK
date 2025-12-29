@@ -3,26 +3,26 @@
  *
  * Handles trip record endpoints:
  * - GET /trip-records/pairs - List trip record pairs
- * - GET /trip-records/pair-summaries - Get daily summary statistics
- * - GET /trip-records/csv/pairs - Get enriched CSV trip records
- * - GET /trip-records/csv/pairs-grouped - Get grouped trip pairs
- * - GET /trip-records/csv/stats - Get CSV trip record statistics
+ * - GET /trip-records/pairs-grouped - Get grouped trip pairs
+ * - GET /trip-records/stats - Get trip record statistics
+ * - POST /trip-records/upload - Upload trip records
+ * - GET /trip-records/manifest/pairs - List manifest trip record pairs
+ * - GET /trip-records/manifest/pair-summaries - Get manifest summary statistics
  *
  * Uses optimat.demand_response_manifest_review and optimat.trip_record_pairs_raw tables.
  */
 
 import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import {
-  corsHeaders,
   errorResponse,
   handleCorsPreflightRequest,
   jsonResponse,
 } from "../_shared/cors.ts";
-import { createOptimatClient } from "../_shared/supabase.ts";
+import { createOptimatClient, TABLES } from "../_shared/supabase.ts";
 
 // Type definitions
 
-interface TripRecordPair {
+interface ManifestTripRecordPair {
   service_date: string;
   trip_id: string;
   provider_id: number | null;
@@ -41,7 +41,7 @@ interface TripRecordPair {
   activity_minutes: number | null;
 }
 
-interface TripRecordPairSummary {
+interface ManifestTripRecordPairSummary {
   service_date: string;
   pair_count: number;
   average_outbound_minutes: number | null;
@@ -49,7 +49,7 @@ interface TripRecordPairSummary {
   average_activity_minutes: number | null;
 }
 
-interface TripRecordCsvPair {
+interface TripPairRecord {
   trip_id: number;
   pickup_sequence: number;
   drop_sequence: number;
@@ -71,7 +71,7 @@ interface TripRecordCsvPair {
   route_summary: string | null;
 }
 
-interface TripRecordCsvLeg {
+interface TripPairLeg {
   trip_id: number;
   pickup_sequence: number;
   drop_sequence: number;
@@ -89,9 +89,9 @@ interface TripRecordCsvLeg {
   route_summary: string | null;
 }
 
-interface TripRecordCsvPairGrouped {
-  outbound: TripRecordCsvLeg;
-  return_leg: TripRecordCsvLeg | null;
+interface TripPairGroup {
+  outbound: TripPairLeg;
+  return_leg: TripPairLeg | null;
   gap_minutes: number | null;
   round_trip_duration_minutes: number | null;
   is_round_trip: boolean;
@@ -108,7 +108,7 @@ interface TripRecordHourCount {
   count: number;
 }
 
-interface TripRecordCsvStats {
+interface TripPairStats {
   total_records: number;
   with_return_count: number;
   pct_with_return: number;
@@ -197,14 +197,257 @@ function parseRoute(pathname: string): { segments: string[] } {
   return { segments };
 }
 
+function hashToIndex(value: string, modulo: number): number {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return modulo === 0 ? 0 : hash % modulo;
+}
+
+function applyMockProviderIdsToManifestPairs(
+  pairs: ManifestTripRecordPair[],
+  providerIds: number[]
+): ManifestTripRecordPair[] {
+  if (!providerIds.length) return pairs;
+  return pairs.map((pair) => {
+    const key = `${pair.service_date ?? ""}-${pair.trip_id ?? ""}`;
+    const providerId = providerIds[hashToIndex(key, providerIds.length)];
+    return { ...pair, provider_id: providerId };
+  });
+}
+
+function applyMockProviderIdsToTripRows(
+  rows: Record<string, unknown>[],
+  providerIds: number[],
+  fallbackProviderId?: number | null
+): Record<string, unknown>[] {
+  if (!providerIds.length) {
+    if (fallbackProviderId === null || fallbackProviderId === undefined) return rows;
+    return rows.map((row) => ({ ...row, provider_id: fallbackProviderId }));
+  }
+
+  const returnTripMap = new Map<number, number>();
+  for (const row of rows) {
+    const tripIdRaw = row.trip_id;
+    const returnTripIdRaw = row.trip_id_return;
+    const tripId = tripIdRaw === null || tripIdRaw === undefined ? NaN : Number(tripIdRaw);
+    const returnTripId =
+      returnTripIdRaw === null || returnTripIdRaw === undefined ? NaN : Number(returnTripIdRaw);
+    if (
+      Number.isFinite(tripId) &&
+      Number.isFinite(returnTripId) &&
+      returnTripId > 0 &&
+      !returnTripMap.has(returnTripId)
+    ) {
+      returnTripMap.set(returnTripId, tripId);
+    }
+  }
+
+  return rows.map((row) => {
+    const tripIdRaw = row.trip_id;
+    const tripId = tripIdRaw === null || tripIdRaw === undefined ? NaN : Number(tripIdRaw);
+    const assignmentTripId = returnTripMap.get(tripId) ?? tripId;
+    let providerIndex = 0;
+    if (Number.isFinite(assignmentTripId)) {
+      providerIndex = Math.abs(assignmentTripId) % providerIds.length;
+    } else {
+      const key = String(row.trip_id ?? row.trip_id_return ?? "");
+      providerIndex = hashToIndex(key, providerIds.length);
+    }
+    const providerId = providerIds[providerIndex];
+    return { ...row, provider_id: providerId };
+  });
+}
+
+async function fetchProviderIds(): Promise<number[]> {
+  try {
+    const supabase = createOptimatClient();
+    const { data, error } = await supabase
+      .from(TABLES.PROVIDERS)
+      .select("provider_id");
+
+    if (error) {
+      console.error("Error fetching provider ids:", error);
+    }
+
+    const ids = (data || [])
+      .map((row) => Number(row.provider_id))
+      .filter((id) => Number.isFinite(id));
+    if (ids.length) {
+      return ids;
+    }
+  } catch (err) {
+    console.error("Unexpected error fetching provider ids:", err);
+  }
+
+  return [];
+}
+
+function dedupeTripRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  const seen = new Set<string>();
+  const deduped: Record<string, unknown>[] = [];
+
+  for (const row of rows) {
+    const key = [
+      row.trip_id ?? "",
+      row.no_pk ?? "",
+      row.no_dp ?? "",
+      row.pick_time ?? "",
+      row.drop_time ?? "",
+      row.addr_pk ?? "",
+      row.addr_dp ?? "",
+      row.trip_id_return ?? "",
+    ].join("|");
+
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(row);
+  }
+
+  return deduped;
+}
+
+const UPLOAD_ALLOWED_COLUMNS = new Set([
+  "no_pk",
+  "no_dp",
+  "trip_id",
+  "pick_time",
+  "addr_pk",
+  "drop_time",
+  "addr_dp",
+  "no_return",
+  "psg_on_brd",
+  "trip_id_return",
+  "outgo_dura",
+  "google_maps_route",
+  "google_route_distance_m",
+  "google_route_duration_s",
+  "google_route_summary",
+  "provider_id",
+]);
+
+const UPLOAD_NUMERIC_COLUMNS = new Set([
+  "no_pk",
+  "no_dp",
+  "trip_id",
+  "no_return",
+  "psg_on_brd",
+  "trip_id_return",
+  "google_route_distance_m",
+  "google_route_duration_s",
+  "provider_id",
+]);
+
+const UPLOAD_COLUMN_ALIASES: Record<string, string> = {
+  pickup_address: "addr_pk",
+  pickup_addr: "addr_pk",
+  pickup: "addr_pk",
+  drop_address: "addr_dp",
+  drop_addr: "addr_dp",
+  dropoff_address: "addr_dp",
+  passengers_on_board: "psg_on_brd",
+  passengers: "psg_on_brd",
+  return_trip_id: "trip_id_return",
+  return_id: "trip_id_return",
+  outbound_duration: "outgo_dura",
+  duration: "outgo_dura",
+  route_polyline: "google_maps_route",
+  route_distance_meters: "google_route_distance_m",
+  route_distance_m: "google_route_distance_m",
+  route_duration_seconds: "google_route_duration_s",
+  route_duration_s: "google_route_duration_s",
+  route_summary: "google_route_summary",
+  pickup_time: "pick_time",
+  drop_time: "drop_time",
+};
+
+function normalizeUploadHeader(header: string): string {
+  return header
+    .replace(/^\uFEFF/, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function parseUploadRows(text: string): { headers: string[]; rows: string[][] } {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+
+    if (inQuotes) {
+      if (char === "\"") {
+        const nextChar = text[i + 1];
+        if (nextChar === "\"") {
+          field += "\"";
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += char;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inQuotes = true;
+      continue;
+    }
+    if (char === ",") {
+      row.push(field);
+      field = "";
+      continue;
+    }
+    if (char === "\n") {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+      continue;
+    }
+    if (char === "\r") {
+      continue;
+    }
+
+    field += char;
+  }
+
+  row.push(field);
+  if (row.length > 1 || row[0]?.trim()) {
+    rows.push(row);
+  }
+
+  const headers = rows.shift()?.map((header) => header.trim()) ?? [];
+  const dataRows = rows.filter((r) => r.some((cell) => cell.trim() !== ""));
+
+  return { headers, rows: dataRows };
+}
+
+function coerceUploadValue(column: string, value: string): string | number | null {
+  if (value === "") return null;
+  if (UPLOAD_NUMERIC_COLUMNS.has(column)) {
+    const parsed = Number(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return value;
+}
+
 // API Handlers
 
 /**
  * List trip record pairs from demand_response_manifest_review table.
  */
-async function listTripRecordPairs(
+async function listManifestTripRecordPairs(
   serviceDate: string | null,
-  origin?: string | null
+  providerId?: number | null,
+  origin?: string | null,
+  mockProviderIds?: number[] | null
 ): Promise<Response> {
   try {
     const supabase = createOptimatClient();
@@ -232,6 +475,9 @@ async function listTripRecordPairs(
         if (serviceDate) {
           query = query.eq("service_date", serviceDate);
         }
+        if (providerId !== null && providerId !== undefined) {
+          query = query.eq("provider_id", providerId);
+        }
 
         const { data: rawData, error: queryError } = await query.order("service_date").order("trip_id").order("row_number");
 
@@ -241,17 +487,33 @@ async function listTripRecordPairs(
         }
 
         // Process raw data into pairs (simplified version)
-        const pairs = processRawTripRecords(rawData || []);
-        return jsonResponse(pairs, 200, origin);
+        let pairs = processRawTripRecords(rawData || []);
+        if (mockProviderIds && mockProviderIds.length) {
+          pairs = applyMockProviderIdsToManifestPairs(pairs, mockProviderIds);
+        }
+
+        const filteredPairs = providerId !== null && providerId !== undefined
+          ? pairs.filter((pair) => pair.provider_id === providerId)
+          : pairs;
+        return jsonResponse(filteredPairs, 200, origin);
       }
 
       console.error("Error in get_trip_record_pairs:", error);
       return errorResponse(`Database error: ${error.message}`, 500, origin);
     }
 
-    return jsonResponse(data || [], 200, origin);
+    let pairs = data || [];
+    if (mockProviderIds && mockProviderIds.length) {
+      pairs = applyMockProviderIdsToManifestPairs(pairs, mockProviderIds);
+    }
+
+    const filteredData = providerId !== null && providerId !== undefined
+      ? pairs.filter((row) => Number((row as { provider_id?: number | null }).provider_id) === providerId)
+      : pairs;
+
+    return jsonResponse(filteredData, 200, origin);
   } catch (err) {
-    console.error("Unexpected error in listTripRecordPairs:", err);
+    console.error("Unexpected error in listManifestTripRecordPairs:", err);
     return errorResponse("Internal server error", 500, origin);
   }
 }
@@ -260,7 +522,7 @@ async function listTripRecordPairs(
  * Process raw trip records into pairs.
  * Simplified version of the Python logic.
  */
-function processRawTripRecords(records: Record<string, unknown>[]): TripRecordPair[] {
+function processRawTripRecords(records: Record<string, unknown>[]): ManifestTripRecordPair[] {
   // Group records by (service_date, trip_id)
   const grouped = new Map<string, Record<string, unknown>[]>();
 
@@ -276,7 +538,7 @@ function processRawTripRecords(records: Record<string, unknown>[]): TripRecordPa
     grouped.get(key)!.push(record);
   }
 
-  const pairs: TripRecordPair[] = [];
+  const pairs: ManifestTripRecordPair[] = [];
 
   for (const [key, rows] of grouped) {
     const [serviceDateStr, tripId] = key.split("|");
@@ -368,9 +630,13 @@ function processRawTripRecords(records: Record<string, unknown>[]): TripRecordPa
 }
 
 /**
- * Get daily summary statistics for trip record pairs.
+ * Get daily summary statistics for manifest trip record pairs.
  */
-async function listTripRecordPairSummaries(origin?: string | null): Promise<Response> {
+async function listManifestTripRecordPairSummaries(
+  origin?: string | null,
+  providerId?: number | null,
+  mockProviderIds?: number[] | null
+): Promise<Response> {
   try {
     const supabase = createOptimatClient();
 
@@ -384,7 +650,7 @@ async function listTripRecordPairSummaries(origin?: string | null): Promise<Resp
 
       if (isRpcNotFound) {
         // Fall back to computing from pairs
-        const pairsResponse = await listTripRecordPairs(null, origin);
+        const pairsResponse = await listManifestTripRecordPairs(null, providerId, origin, mockProviderIds);
         const pairsData = await pairsResponse.json();
 
         if (!Array.isArray(pairsData)) {
@@ -392,8 +658,8 @@ async function listTripRecordPairSummaries(origin?: string | null): Promise<Resp
         }
 
         // Group by date
-        const byDate = new Map<string, TripRecordPair[]>();
-        for (const pair of pairsData as TripRecordPair[]) {
+        const byDate = new Map<string, ManifestTripRecordPair[]>();
+        for (const pair of pairsData as ManifestTripRecordPair[]) {
           const date = pair.service_date;
           if (!byDate.has(date)) {
             byDate.set(date, []);
@@ -402,7 +668,7 @@ async function listTripRecordPairSummaries(origin?: string | null): Promise<Resp
         }
 
         // Compute summaries
-        const summaries: TripRecordPairSummary[] = [];
+        const summaries: ManifestTripRecordPairSummary[] = [];
         for (const [serviceDate, pairs] of byDate) {
           const outbounds = pairs
             .map((p) => p.outbound_minutes)
@@ -442,15 +708,103 @@ async function listTripRecordPairSummaries(origin?: string | null): Promise<Resp
 
     return jsonResponse(data || [], 200, origin);
   } catch (err) {
-    console.error("Unexpected error in listTripRecordPairSummaries:", err);
+    console.error("Unexpected error in listManifestTripRecordPairSummaries:", err);
     return errorResponse("Internal server error", 500, origin);
   }
 }
 
 /**
- * Get enriched CSV trip records from trip_record_pairs_raw table.
+ * Upload trip records into trip_record_pairs_raw.
  */
-async function listCsvTripRecordPairs(origin?: string | null): Promise<Response> {
+async function uploadTripRecords(request: Request, origin?: string | null): Promise<Response> {
+  try {
+    const payload = await request.json().catch(() => null) as Record<string, unknown> | null;
+    if (!payload || typeof payload !== "object") {
+      return errorResponse("Invalid JSON payload", 400, origin);
+    }
+
+    const recordsText = typeof payload.records === "string" ? payload.records : "";
+    if (!recordsText.trim()) {
+      return errorResponse("Trip records payload is required", 400, origin);
+    }
+
+    const providerIdRaw = payload.provider_id;
+    let providerId: number | null = null;
+    if (providerIdRaw !== undefined && providerIdRaw !== null && String(providerIdRaw).trim() !== "") {
+      const parsed = Number(providerIdRaw);
+      if (Number.isNaN(parsed)) {
+        return errorResponse("Invalid provider_id", 400, origin);
+      }
+      providerId = parsed;
+    }
+
+    const { headers, rows } = parseUploadRows(recordsText);
+    if (headers.length === 0) {
+      return errorResponse("Upload must include a header row", 400, origin);
+    }
+
+    const columnMap = headers.map((header) => {
+      const normalized = normalizeUploadHeader(header);
+      const mapped = UPLOAD_COLUMN_ALIASES[normalized] || normalized;
+      return UPLOAD_ALLOWED_COLUMNS.has(mapped) ? mapped : null;
+    });
+
+    const records: Record<string, unknown>[] = [];
+    for (const row of rows) {
+      const record: Record<string, unknown> = {};
+      const maxColumns = Math.min(row.length, columnMap.length);
+      for (let i = 0; i < maxColumns; i++) {
+        const column = columnMap[i];
+        if (!column) continue;
+        const rawValue = row[i]?.trim() ?? "";
+        record[column] = coerceUploadValue(column, rawValue);
+      }
+
+      if (providerId !== null && record.provider_id === undefined) {
+        record.provider_id = providerId;
+      }
+
+      if (Object.keys(record).length > 0) {
+        records.push(record);
+      }
+    }
+
+    const skippedCount = rows.length - records.length;
+    if (records.length === 0) {
+      return jsonResponse({ inserted_count: 0, skipped_count: skippedCount }, 200, origin);
+    }
+
+    const supabase = createOptimatClient();
+    const batchSize = 500;
+
+    for (let i = 0; i < records.length; i += batchSize) {
+      const batch = records.slice(i, i + batchSize);
+      const { error } = await supabase.from("trip_record_pairs_raw").insert(batch);
+      if (error) {
+        console.error("Error inserting trip records:", error);
+        return errorResponse(`Database error: ${error.message}`, 500, origin);
+      }
+    }
+
+    return jsonResponse(
+      { inserted_count: records.length, skipped_count: skippedCount },
+      200,
+      origin
+    );
+  } catch (err) {
+    console.error("Unexpected error in uploadTripRecords:", err);
+    return errorResponse("Internal server error", 500, origin);
+  }
+}
+
+/**
+ * Get trip records from trip_record_pairs_raw table.
+ */
+async function listTripRecordPairs(
+  origin?: string | null,
+  providerId?: number | null,
+  mockProviderIds?: number[] | null
+): Promise<Response> {
   try {
     const supabase = createOptimatClient();
 
@@ -460,7 +814,7 @@ async function listCsvTripRecordPairs(origin?: string | null): Promise<Response>
       .order("pick_time");
 
     if (error) {
-      console.error("Error fetching CSV trip records:", error);
+      console.error("Error fetching trip records:", error);
       return errorResponse(`Database error: ${error.message}`, 500, origin);
     }
 
@@ -468,16 +822,25 @@ async function listCsvTripRecordPairs(origin?: string | null): Promise<Response>
       return jsonResponse([], 200, origin);
     }
 
+    let rows: Record<string, unknown>[] = dedupeTripRows(data);
+    if (mockProviderIds) {
+      rows = applyMockProviderIdsToTripRows(rows, mockProviderIds, providerId);
+    }
+
+    if (providerId !== null && providerId !== undefined) {
+      rows = rows.filter((row) => Number(row.provider_id) === providerId);
+    }
+
     // Build lookup for return trip pick times
     const pickLookup = new Map<number, string>();
-    for (const row of data) {
+    for (const row of rows) {
       if (row.trip_id !== null) {
         pickLookup.set(Number(row.trip_id), row.pick_time);
       }
     }
 
     // Process records
-    const records: TripRecordCsvPair[] = data.map((row) => {
+    const records: TripPairRecord[] = rows.map((row) => {
       const pickSeconds = timeToSeconds(row.pick_time);
       const dropSeconds = timeToSeconds(row.drop_time);
       const durationMinutes = secondsToMinutes(diffSeconds(pickSeconds, dropSeconds)) || 0;
@@ -534,7 +897,7 @@ async function listCsvTripRecordPairs(origin?: string | null): Promise<Response>
 
     return jsonResponse(records, 200, origin);
   } catch (err) {
-    console.error("Unexpected error in listCsvTripRecordPairs:", err);
+    console.error("Unexpected error in listTripRecordPairs:", err);
     return errorResponse("Internal server error", 500, origin);
   }
 }
@@ -542,7 +905,11 @@ async function listCsvTripRecordPairs(origin?: string | null): Promise<Response>
 /**
  * Get grouped trip pairs with outbound and return legs.
  */
-async function listCsvTripRecordPairsGrouped(origin?: string | null): Promise<Response> {
+async function listTripRecordPairsGrouped(
+  origin?: string | null,
+  providerId?: number | null,
+  mockProviderIds?: number[] | null
+): Promise<Response> {
   try {
     const supabase = createOptimatClient();
 
@@ -552,7 +919,7 @@ async function listCsvTripRecordPairsGrouped(origin?: string | null): Promise<Re
       .order("pick_time");
 
     if (error) {
-      console.error("Error fetching CSV trip records:", error);
+      console.error("Error fetching trip records:", error);
       return errorResponse(`Database error: ${error.message}`, 500, origin);
     }
 
@@ -560,9 +927,18 @@ async function listCsvTripRecordPairsGrouped(origin?: string | null): Promise<Re
       return jsonResponse([], 200, origin);
     }
 
+    let rows: Record<string, unknown>[] = dedupeTripRows(data);
+    if (mockProviderIds) {
+      rows = applyMockProviderIdsToTripRows(rows, mockProviderIds, providerId);
+    }
+
+    if (providerId !== null && providerId !== undefined) {
+      rows = rows.filter((row) => Number(row.provider_id) === providerId);
+    }
+
     // Build lookup by trip_id
     const tripLookup = new Map<number, Record<string, unknown>>();
-    for (const row of data) {
+    for (const row of rows) {
       if (row.trip_id !== null) {
         tripLookup.set(Number(row.trip_id), row);
       }
@@ -570,7 +946,7 @@ async function listCsvTripRecordPairsGrouped(origin?: string | null): Promise<Re
 
     // Track which trip IDs are used as return legs
     const usedAsReturn = new Set<number>();
-    for (const row of data) {
+    for (const row of rows) {
       const tripIdReturn = row.trip_id_return;
       if (tripIdReturn !== null && tripIdReturn > 0) {
         usedAsReturn.add(Number(tripIdReturn));
@@ -578,9 +954,9 @@ async function listCsvTripRecordPairsGrouped(origin?: string | null): Promise<Re
     }
 
     // Build grouped pairs
-    const groupedPairs: TripRecordCsvPairGrouped[] = [];
+    const groupedPairs: TripPairGroup[] = [];
 
-    for (const row of data) {
+    for (const row of rows) {
       const tripId = Number(row.trip_id);
 
       // Skip if this trip is used as a return leg
@@ -596,7 +972,7 @@ async function listCsvTripRecordPairsGrouped(origin?: string | null): Promise<Re
       const { street: pickupAddress, city: pickupCity } = splitAddress(row.addr_pk);
       const { street: dropAddress, city: dropCity } = splitAddress(row.addr_dp);
 
-      const outboundLeg: TripRecordCsvLeg = {
+      const outboundLeg: TripPairLeg = {
         trip_id: tripId,
         pickup_sequence: Number(row.no_pk),
         drop_sequence: Number(row.no_dp),
@@ -615,7 +991,7 @@ async function listCsvTripRecordPairsGrouped(origin?: string | null): Promise<Re
       };
 
       // Check for return leg
-      let returnLeg: TripRecordCsvLeg | null = null;
+      let returnLeg: TripPairLeg | null = null;
       let gapMinutes: number | null = null;
       let roundTripDuration: number | null = null;
       let isRoundTrip = false;
@@ -674,19 +1050,23 @@ async function listCsvTripRecordPairsGrouped(origin?: string | null): Promise<Re
 
     return jsonResponse(groupedPairs, 200, origin);
   } catch (err) {
-    console.error("Unexpected error in listCsvTripRecordPairsGrouped:", err);
+    console.error("Unexpected error in listTripRecordPairsGrouped:", err);
     return errorResponse("Internal server error", 500, origin);
   }
 }
 
 /**
- * Get summary statistics for CSV trip records.
+ * Get summary statistics for trip records.
  */
-async function getCsvTripRecordStats(origin?: string | null): Promise<Response> {
+async function getTripRecordStats(
+  origin?: string | null,
+  providerId?: number | null,
+  mockProviderIds?: number[] | null
+): Promise<Response> {
   try {
-    // Get all CSV trip records
-    const pairsResponse = await listCsvTripRecordPairs(origin);
-    const records = (await pairsResponse.json()) as TripRecordCsvPair[];
+    // Get all trip records
+    const pairsResponse = await listTripRecordPairs(origin, providerId, mockProviderIds);
+    const records = (await pairsResponse.json()) as TripPairRecord[];
 
     if (!Array.isArray(records) || records.length === 0) {
       return jsonResponse(
@@ -779,7 +1159,7 @@ async function getCsvTripRecordStats(origin?: string | null): Promise<Response> 
     const pickTimes = records.map((r) => r.pick_time).filter(Boolean).sort();
     const dropTimes = records.map((r) => r.drop_time).filter(Boolean).sort();
 
-    const stats: TripRecordCsvStats = {
+    const stats: TripPairStats = {
       total_records: records.length,
       with_return_count: withReturn.length,
       pct_with_return: Math.round((withReturn.length / records.length) * 1000) / 10,
@@ -796,7 +1176,7 @@ async function getCsvTripRecordStats(origin?: string | null): Promise<Response> 
 
     return jsonResponse(stats, 200, origin);
   } catch (err) {
-    console.error("Unexpected error in getCsvTripRecordStats:", err);
+    console.error("Unexpected error in getTripRecordStats:", err);
     return errorResponse("Internal server error", 500, origin);
   }
 }
@@ -816,6 +1196,15 @@ serve(async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     const pathname = url.pathname;
     const method = req.method;
+    const providerIdParam = url.searchParams.get("provider_id");
+    const providerId = providerIdParam ? Number(providerIdParam) : null;
+    const mockParam = url.searchParams.get("mock");
+    const useMockProviders = mockParam === "true" || mockParam === "1";
+    const mockProviderIds = useMockProviders ? await fetchProviderIds() : null;
+
+    if (providerIdParam && Number.isNaN(providerId)) {
+      return errorResponse("Invalid provider_id", 400, requestOrigin);
+    }
 
     // Parse route
     const { segments } = parseRoute(pathname);
@@ -825,28 +1214,33 @@ serve(async (req: Request): Promise<Response> => {
     // Route handling
     // GET /trip-records/pairs - List trip record pairs
     if (method === "GET" && segments[0] === "pairs" && segments.length === 1) {
+      return await listTripRecordPairs(requestOrigin, providerId, mockProviderIds);
+    }
+
+    // GET /trip-records/pairs-grouped - Get grouped trip pairs
+    if (method === "GET" && segments[0] === "pairs-grouped" && segments.length === 1) {
+      return await listTripRecordPairsGrouped(requestOrigin, providerId, mockProviderIds);
+    }
+
+    // GET /trip-records/stats - Get trip record stats
+    if (method === "GET" && segments[0] === "stats" && segments.length === 1) {
+      return await getTripRecordStats(requestOrigin, providerId, mockProviderIds);
+    }
+
+    // POST /trip-records/upload - Upload trip records
+    if (method === "POST" && segments[0] === "upload" && segments.length === 1) {
+      return await uploadTripRecords(req, requestOrigin);
+    }
+
+    // GET /trip-records/manifest/pairs - List manifest trip record pairs
+    if (method === "GET" && segments[0] === "manifest" && segments[1] === "pairs" && segments.length === 2) {
       const serviceDate = url.searchParams.get("service_date");
-      return await listTripRecordPairs(serviceDate, requestOrigin);
+      return await listManifestTripRecordPairs(serviceDate, providerId, requestOrigin, mockProviderIds);
     }
 
-    // GET /trip-records/pair-summaries - Get daily summaries
-    if (method === "GET" && segments[0] === "pair-summaries" && segments.length === 1) {
-      return await listTripRecordPairSummaries(requestOrigin);
-    }
-
-    // GET /trip-records/csv/pairs - Get CSV trip records
-    if (method === "GET" && segments[0] === "csv" && segments[1] === "pairs" && segments.length === 2) {
-      return await listCsvTripRecordPairs(requestOrigin);
-    }
-
-    // GET /trip-records/csv/pairs-grouped - Get grouped CSV trip pairs
-    if (method === "GET" && segments[0] === "csv" && segments[1] === "pairs-grouped" && segments.length === 2) {
-      return await listCsvTripRecordPairsGrouped(requestOrigin);
-    }
-
-    // GET /trip-records/csv/stats - Get CSV stats
-    if (method === "GET" && segments[0] === "csv" && segments[1] === "stats" && segments.length === 2) {
-      return await getCsvTripRecordStats(requestOrigin);
+    // GET /trip-records/manifest/pair-summaries - Get manifest daily summaries
+    if (method === "GET" && segments[0] === "manifest" && segments[1] === "pair-summaries" && segments.length === 2) {
+      return await listManifestTripRecordPairSummaries(requestOrigin, providerId, mockProviderIds);
     }
 
     // Route not found

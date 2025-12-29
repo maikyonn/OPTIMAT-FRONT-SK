@@ -1,18 +1,22 @@
 import MapView from './routes/MapView.svelte';
 import ChatView from './routes/ChatView.svelte';
 import BetaSignup from './routes/BetaSignup.svelte';
-import TripRecordsCsv from './routes/TripRecordsCsv.svelte';
+import TripPairs from './routes/TripPairs.svelte';
 import ProvidersInfo from './routes/ProvidersInfo.svelte';
-import StaffPortal from './routes/StaffPortal.svelte';
+import ProviderPortal from './routes/ProviderPortal.svelte';
+import ProviderPortalInfo from './routes/ProviderPortalInfo.svelte';
+import ProviderPortalTripRecords from './routes/ProviderPortalTripRecords.svelte';
+import ProviderPortalTripUpload from './routes/ProviderPortalTripUpload.svelte';
+import ArchitectureDocs from './routes/ArchitectureDocs.svelte';
 
 const routes = {
   // Map interface (default)
   '/': MapView,
   '/map': MapView,
 
-  // CSV paired trip records viewer (also the default /trip-pairs route)
-  '/trip-pairs': TripRecordsCsv,
-  '/trip-records-csv': TripRecordsCsv,
+  // Paired trip records viewer
+  '/trip-pairs': TripPairs,
+  '/trip-records': TripPairs,
 
   // Chat interface with integrated examples
   '/chat': ChatView,
@@ -20,8 +24,15 @@ const routes = {
   // Providers info management page
   '/providers-info': ProvidersInfo,
 
-  // Staff portal for providers to edit their own information
-  '/staff': StaffPortal,
+  // Provider portal (login + provider-only tabs)
+  '/provider-portal': ProviderPortal,
+  '/provider-portal/info': ProviderPortalInfo,
+  '/provider-portal/trip-records': ProviderPortalTripRecords,
+  '/provider-portal/trip-upload': ProviderPortalTripUpload,
+  '/staff': ProviderPortal,
+
+  // Architecture documentation
+  '/architecture': ArchitectureDocs,
 
   // Beta signup page
   '/beta-signup': BetaSignup,

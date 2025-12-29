@@ -107,11 +107,23 @@ Trip record analysis for paired routes.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/trip-records/pairs` | List trip record pairs |
-| GET | `/trip-records/pairs?service_date=YYYY-MM-DD` | Filter pairs by date |
-| GET | `/trip-records/pair-summaries` | Get daily summary statistics |
-| GET | `/trip-records/csv/pairs` | Get enriched CSV trip records |
-| GET | `/trip-records/csv/pairs-grouped` | Get grouped trip pairs (outbound/return) |
-| GET | `/trip-records/csv/stats` | Get CSV trip record statistics |
+| GET | `/trip-records/pairs?provider_id=123` | Filter pairs by provider |
+| GET | `/trip-records/pairs?mock=true` | Return pairs with mocked provider assignment |
+| GET | `/trip-records/pairs-grouped` | Get grouped trip pairs (outbound/return) |
+| GET | `/trip-records/stats` | Get trip record statistics |
+| POST | `/trip-records/upload` | Upload trip records |
+| GET | `/trip-records/manifest/pairs?service_date=YYYY-MM-DD` | List manifest trip record pairs |
+| GET | `/trip-records/manifest/pair-summaries` | Get manifest daily summary statistics |
+
+#### Upload Payload
+
+```json
+{
+  "records": "raw .csv text",
+  "provider_id": 123,
+  "filename": "trips.csv"
+}
+```
 
 ---
 
@@ -214,11 +226,12 @@ CREATE TABLE optimat.providers (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Trip record pairs (CSV data)
+-- Trip record pairs (uploaded trip data)
 CREATE TABLE optimat.trip_record_pairs_raw (
   no_pk INTEGER,
   no_dp INTEGER,
   trip_id INTEGER,
+  provider_id INTEGER,
   pick_time TIME,
   addr_pk TEXT,
   drop_time TIME,
@@ -355,7 +368,7 @@ This Edge Functions implementation replaces the OPTIMAT-FASTAPI service. Key dif
 | `GET /tri-delta-transit/trips` | `GET /tri-delta-transit/trips` |
 | `GET /tri-delta-transit/routes` | `GET /tri-delta-transit/routes` |
 | `GET /trip-records/pairs` | `GET /trip-records/pairs` |
-| `GET /trip-records/pair-summaries` | `GET /trip-records/pair-summaries` |
-| `GET /trip-records/csv/pairs` | `GET /trip-records/csv/pairs` |
-| `GET /trip-records/csv/pairs-grouped` | `GET /trip-records/csv/pairs-grouped` |
-| `GET /trip-records/csv/stats` | `GET /trip-records/csv/stats` |
+| `GET /trip-records/pair-summaries` | `GET /trip-records/manifest/pair-summaries` |
+| `GET /trip-records/pairs-grouped` | `GET /trip-records/pairs-grouped` |
+| `GET /trip-records/stats` | `GET /trip-records/stats` |
+| `POST /trip-records/upload` | `POST /trip-records/upload` |

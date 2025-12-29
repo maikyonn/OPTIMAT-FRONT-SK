@@ -596,28 +596,20 @@ export async function createMessage(
  *
  * @returns List of trip record pairs
  */
-export async function getTripRecordPairs(): Promise<{ data: TripRecordPair[] | null; error: Error | null }> {
-  const { data, error } = await fetchEdgeFunction<TripRecordPair[]>('trip-records/pairs');
-  return { data, error };
-}
+export async function getTripRecordPairs(
+  options: { providerId?: string | number; mock?: boolean } = {}
+): Promise<{ data: TripRecordPair[] | null; error: Error | null }> {
+  const params: Record<string, string> = {};
+  if (options.providerId !== undefined && options.providerId !== null) {
+    params.provider_id = String(options.providerId);
+  }
+  if (options.mock) {
+    params.mock = 'true';
+  }
 
-/**
- * Get trip record pair summaries
- *
- * @returns List of pair summaries
- */
-export async function getTripRecordPairSummaries(): Promise<{ data: unknown[] | null; error: Error | null }> {
-  const { data, error } = await fetchEdgeFunction<unknown[]>('trip-records/pair-summaries');
-  return { data, error };
-}
-
-/**
- * Get enriched trip record pairs from CSV
- *
- * @returns Enriched trip pairs with routing data
- */
-export async function getTripRecordCSVPairs(): Promise<{ data: TripRecordPair[] | null; error: Error | null }> {
-  const { data, error } = await fetchEdgeFunction<TripRecordPair[]>('trip-records/csv/pairs');
+  const { data, error } = await fetchEdgeFunction<TripRecordPair[]>('trip-records/pairs', {
+    params,
+  });
   return { data, error };
 }
 
@@ -626,8 +618,20 @@ export async function getTripRecordCSVPairs(): Promise<{ data: TripRecordPair[] 
  *
  * @returns Grouped trip pairs
  */
-export async function getTripRecordCSVPairsGrouped(): Promise<{ data: unknown[] | null; error: Error | null }> {
-  const { data, error } = await fetchEdgeFunction<unknown[]>('trip-records/csv/pairs-grouped');
+export async function getTripRecordPairsGrouped(
+  options: { providerId?: string | number; mock?: boolean } = {}
+): Promise<{ data: unknown[] | null; error: Error | null }> {
+  const params: Record<string, string> = {};
+  if (options.providerId !== undefined && options.providerId !== null) {
+    params.provider_id = String(options.providerId);
+  }
+  if (options.mock) {
+    params.mock = 'true';
+  }
+
+  const { data, error } = await fetchEdgeFunction<unknown[]>('trip-records/pairs-grouped', {
+    params,
+  });
   return { data, error };
 }
 
@@ -636,8 +640,41 @@ export async function getTripRecordCSVPairsGrouped(): Promise<{ data: unknown[] 
  *
  * @returns Trip record statistics
  */
-export async function getTripRecordStats(): Promise<{ data: TripRecordStats | null; error: Error | null }> {
-  const { data, error } = await fetchEdgeFunction<TripRecordStats>('trip-records/csv/stats');
+export async function getTripRecordStats(
+  options: { providerId?: string | number; mock?: boolean } = {}
+): Promise<{ data: TripRecordStats | null; error: Error | null }> {
+  const params: Record<string, string> = {};
+  if (options.providerId !== undefined && options.providerId !== null) {
+    params.provider_id = String(options.providerId);
+  }
+  if (options.mock) {
+    params.mock = 'true';
+  }
+
+  const { data, error } = await fetchEdgeFunction<TripRecordStats>('trip-records/stats', {
+    params,
+  });
+  return { data, error };
+}
+
+export interface TripRecordUploadResponse {
+  inserted_count: number;
+  skipped_count?: number;
+}
+
+export async function uploadTripRecords(payload: {
+  records: string;
+  providerId?: string | number;
+  filename?: string;
+}): Promise<{ data: TripRecordUploadResponse | null; error: Error | null }> {
+  const { data, error } = await fetchEdgeFunction<TripRecordUploadResponse>('trip-records/upload', {
+    method: 'POST',
+    body: {
+      records: payload.records,
+      provider_id: payload.providerId,
+      filename: payload.filename,
+    },
+  });
   return { data, error };
 }
 

@@ -18,7 +18,8 @@
     deleteChatExample,
     loadExampleReplayData,
     getConversationMessages,
-    getConversationToolCalls
+    getConversationToolCalls,
+    getProviderServiceZone
   } from '$lib/api';
 
   let mounted = false;
@@ -372,16 +373,29 @@
     }
   }
 
-  function showProviderZoneOnMap(provider) {
+  async function showProviderZoneOnMap(provider) {
     if (!provider) return;
     const providerId = provider.provider_id || provider.id;
     serviceZoneManager.clearAllServiceZones();
 
-    if (provider.service_zone) {
+    let serviceZone = provider.service_zone;
+    if (!serviceZone && providerId != null) {
       try {
-        const geoJson = typeof provider.service_zone === 'string'
-          ? JSON.parse(provider.service_zone)
-          : provider.service_zone;
+        const { data, error } = await getProviderServiceZone(providerId);
+        if (!error && data?.has_service_zone && data.raw_data) {
+          serviceZone = data.raw_data;
+          provider.service_zone = serviceZone;
+        }
+      } catch (e) {
+        console.error('Error fetching provider service zone:', e);
+      }
+    }
+
+    if (serviceZone) {
+      try {
+        const geoJson = typeof serviceZone === 'string'
+          ? JSON.parse(serviceZone)
+          : serviceZone;
 
         serviceZoneManager.addServiceZone({
           type: 'provider',

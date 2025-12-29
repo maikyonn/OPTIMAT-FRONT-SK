@@ -11,14 +11,17 @@
   export let fullWidth = false;
   export let appMode = false; // Desktop app mode - edge-to-edge, no margins
 
-  const navItems = [
+  const defaultNavItems = [
     { label: 'Map', href: '/map', icon: '🗺️' },
     { label: 'Chat', href: '/chat', icon: '💬' },
     { label: 'Providers', href: '/providers-info', icon: '🏢' },
-    { label: 'Staff Portal', href: '/staff', icon: '👤' },
+    { label: 'Provider Portal', href: '/provider-portal', icon: '👤' },
     { label: 'Trip Pairs', href: '/trip-pairs', icon: '📊' },
+    { label: 'Architecture', href: '/architecture', icon: '🏗️' },
     { label: 'Beta Signup', href: '/beta-signup', icon: '✨' }
   ];
+
+  export let navItems = defaultNavItems;
 
   let currentPath = '/';
 
@@ -62,7 +65,9 @@
               : 'hover:bg-muted text-muted-foreground hover:text-foreground'}`}
           on:click={() => navigate(item.href)}
         >
-          <span class="text-[10px]">{item.icon}</span>
+          {#if item.icon}
+            <span class="text-[10px]">{item.icon}</span>
+          {/if}
           {item.label}
         </button>
       {/each}
