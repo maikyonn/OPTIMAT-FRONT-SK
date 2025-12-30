@@ -28,12 +28,14 @@
 
     {#if overlayMode === 'segments'}
       {#each overlaySegments as segment, i (`${segment.id ?? 'segment'}-${i}`)}
+        {@const isSelected = selectedTripId === segment.id}
+        {@const baseColor = segment.color ?? '#6366f1'}
         <Polyline
           latLngs={[segment.origin, segment.destination]}
           options={{
-            color: selectedTripId === segment.id ? '#2563eb' : '#6366f1',
-            weight: selectedTripId === segment.id ? 4 : 2,
-            opacity: selectedTripId === segment.id ? 0.85 : 0.18,
+            color: isSelected ? '#2563eb' : baseColor,
+            weight: isSelected ? 4 : 2,
+            opacity: isSelected ? 0.85 : 0.28,
             lineCap: 'round'
           }}
         />

@@ -97,7 +97,7 @@
     loadingExamples = true;
     examplesError = null;
     try {
-      const { data, error } = await listChatExamples(true);
+      const { data, error } = await listChatExamples();
       if (error) throw error;
       chatExamples = data || [];
     } catch (error) {

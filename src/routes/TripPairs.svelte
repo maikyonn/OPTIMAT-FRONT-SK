@@ -4,7 +4,7 @@
 </script>
 
 <PageShell
-  title="Trip Pairs"
+  title="Service Dashboard"
   description="Explore paired trip records with return gaps, hotspots, and time-of-day insights."
   appMode={true}
 >

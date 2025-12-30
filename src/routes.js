@@ -8,6 +8,8 @@ import ProviderPortalInfo from './routes/ProviderPortalInfo.svelte';
 import ProviderPortalTripRecords from './routes/ProviderPortalTripRecords.svelte';
 import ProviderPortalTripUpload from './routes/ProviderPortalTripUpload.svelte';
 import ArchitectureDocs from './routes/ArchitectureDocs.svelte';
+import DataApiDocs from './routes/DataApiDocs.svelte';
+import UniversalServiceDashboard from './routes/UniversalServiceDashboard.svelte';
 
 const routes = {
   // Map interface (default)
@@ -33,6 +35,8 @@ const routes = {
 
   // Architecture documentation
   '/architecture': ArchitectureDocs,
+  '/api-docs': DataApiDocs,
+  '/universal-service-dashboard': UniversalServiceDashboard,
 
   // Beta signup page
   '/beta-signup': BetaSignup,

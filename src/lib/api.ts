@@ -696,19 +696,11 @@ export interface ChatExample {
 /**
  * List chat examples
  *
- * @param isActive - Filter by active status
  * @returns List of chat examples
  */
-export async function listChatExamples(
-  isActive?: boolean
-): Promise<{ data: ChatExample[] | null; error: Error | null }> {
-  const params: Record<string, string> = {};
-  if (isActive !== undefined) {
-    params.is_active = String(isActive);
-  }
-
+export async function listChatExamples(): Promise<{ data: ChatExample[] | null; error: Error | null }> {
   // The Edge Function returns `{ data: ChatExample[], pagination: ... }`.
-  const { data, error } = await fetchEdgeFunction<{ data: ChatExample[] }>('chat-examples', { params });
+  const { data, error } = await fetchEdgeFunction<{ data: ChatExample[] }>('chat-examples');
   if (error) return { data: null, error };
   return { data: data?.data ?? null, error: null };
 }

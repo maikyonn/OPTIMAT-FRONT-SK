@@ -12,32 +12,63 @@
   export let appMode = false; // Desktop app mode - edge-to-edge, no margins
 
   const defaultNavItems = [
-    { label: 'Map', href: '/map', icon: '🗺️' },
-    { label: 'Chat', href: '/chat', icon: '💬' },
     { label: 'Providers', href: '/providers-info', icon: '🏢' },
     { label: 'Provider Portal', href: '/provider-portal', icon: '👤' },
-    { label: 'Trip Pairs', href: '/trip-pairs', icon: '📊' },
+    { label: 'Service Dashboard', href: '/trip-pairs', icon: '📊' },
+    { label: 'Universal Service Dashboard', href: '/universal-service-dashboard', icon: '🧭' },
     { label: 'Architecture', href: '/architecture', icon: '🏗️' },
+    { label: 'API Docs', href: '/api-docs', icon: 'API' },
     { label: 'Beta Signup', href: '/beta-signup', icon: '✨' }
+  ];
+
+  const findTripOptions = [
+    { label: 'Chat', href: '/chat' },
+    { label: 'Map', href: '/map' }
   ];
 
   export let navItems = defaultNavItems;
 
   let currentPath = '/';
+  let findTripOpen = false;
+  let findTripValue = '/chat';
+  let findTripMenuRef;
+  $: findTripLabel = findTripValue === '/map' ? 'Map' : 'Chat';
 
   onMount(() => {
     currentPath = window.location.hash.replace('#', '') || '/';
+    findTripValue = currentPath === '/map' ? '/map' : '/chat';
     // Listen for hash changes
     const handleHashChange = () => {
       currentPath = window.location.hash.replace('#', '') || '/';
+      findTripValue = currentPath === '/map' ? '/map' : '/chat';
     };
     window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
+    const handleWindowClick = (event) => {
+      if (!findTripOpen || !findTripMenuRef) return;
+      if (!findTripMenuRef.contains(event.target)) {
+        findTripOpen = false;
+      }
+    };
+    window.addEventListener('click', handleWindowClick);
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange);
+      window.removeEventListener('click', handleWindowClick);
+    };
   });
 
   function navigate(href: string) {
     push(href);
     currentPath = href;
+    findTripValue = href === '/map' ? '/map' : '/chat';
+    findTripOpen = false;
+  }
+
+  function toggleFindTripMenu() {
+    findTripOpen = !findTripOpen;
+  }
+
+  function handleFindTripSelect(href: string) {
+    navigate(href);
   }
 </script>
 
@@ -57,6 +88,42 @@
 
     <!-- Navigation tabs -->
     <nav class="flex items-center gap-0.5">
+      <div class="relative" bind:this={findTripMenuRef}>
+        <button
+          class={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition
+            ${currentPath === '/chat' || currentPath === '/map'
+              ? 'bg-primary text-primary-foreground'
+              : 'hover:bg-muted text-muted-foreground hover:text-foreground'}`}
+          aria-haspopup="menu"
+          aria-expanded={findTripOpen}
+          on:click|stopPropagation={toggleFindTripMenu}
+        >
+          <span class="text-[10px] uppercase tracking-wide">Find your Trip</span>
+          <span class="text-[10px] text-muted-foreground">•</span>
+          <span>{findTripLabel}</span>
+          <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M6 9l6 6 6-6" />
+          </svg>
+        </button>
+
+        {#if findTripOpen}
+          <div class="absolute left-0 top-full z-30 mt-1 w-44 rounded-md border border-border/70 bg-card shadow-lg">
+            {#each findTripOptions as option}
+              <button
+                class={`flex w-full items-center justify-between px-3 py-2 text-xs transition
+                  ${findTripValue === option.href ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted/70'}`}
+                on:click={() => handleFindTripSelect(option.href)}
+              >
+                <span>{option.label}</span>
+                {#if findTripValue === option.href}
+                  <span class="text-[10px] text-muted-foreground">Default</span>
+                {/if}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+
       {#each navItems as item}
         <button
           class={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition
