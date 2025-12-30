@@ -33,6 +33,7 @@
   let findTripValue = '/chat';
   let findTripMenuRef;
   $: findTripLabel = findTripValue === '/map' ? 'Map' : 'Chat';
+  $: showFindTrip = !(currentPath.startsWith('/provider-portal') || currentPath === '/staff');
 
   onMount(() => {
     currentPath = window.location.hash.replace('#', '') || '/';
@@ -72,9 +73,9 @@
   }
 </script>
 
-<div class="h-screen w-screen overflow-hidden bg-background text-foreground flex flex-col">
+<div class="h-screen w-screen bg-background text-foreground flex flex-col">
   <!-- Compact header bar - desktop app style -->
-  <header class="flex-shrink-0 h-10 border-b border-border/60 bg-card flex items-center px-2 gap-1">
+  <header class="relative z-[1200] flex-shrink-0 h-10 border-b border-border/60 bg-card flex items-center px-2 gap-1">
     <!-- Logo/brand -->
     <button
       class="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-muted transition text-sm font-semibold"
@@ -88,41 +89,43 @@
 
     <!-- Navigation tabs -->
     <nav class="flex items-center gap-0.5">
-      <div class="relative" bind:this={findTripMenuRef}>
-        <button
-          class={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition
-            ${currentPath === '/chat' || currentPath === '/map'
-              ? 'bg-primary text-primary-foreground'
-              : 'hover:bg-muted text-muted-foreground hover:text-foreground'}`}
-          aria-haspopup="menu"
-          aria-expanded={findTripOpen}
-          on:click|stopPropagation={toggleFindTripMenu}
-        >
-          <span class="text-[10px] uppercase tracking-wide">Find your Trip</span>
-          <span class="text-[10px] text-muted-foreground">•</span>
-          <span>{findTripLabel}</span>
-          <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M6 9l6 6 6-6" />
-          </svg>
-        </button>
+      {#if showFindTrip}
+        <div class="relative" bind:this={findTripMenuRef}>
+          <button
+            class={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition
+              ${currentPath === '/chat' || currentPath === '/map'
+                ? 'bg-primary text-primary-foreground'
+                : 'hover:bg-muted text-muted-foreground hover:text-foreground'}`}
+            aria-haspopup="menu"
+            aria-expanded={findTripOpen}
+            on:click|stopPropagation={toggleFindTripMenu}
+          >
+            <span class="text-[10px] uppercase tracking-wide">Find your Trip</span>
+            <span class="text-[10px] text-muted-foreground">•</span>
+            <span>{findTripLabel}</span>
+            <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
 
-        {#if findTripOpen}
-          <div class="absolute left-0 top-full z-30 mt-1 w-44 rounded-md border border-border/70 bg-card shadow-lg">
-            {#each findTripOptions as option}
-              <button
-                class={`flex w-full items-center justify-between px-3 py-2 text-xs transition
-                  ${findTripValue === option.href ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted/70'}`}
-                on:click={() => handleFindTripSelect(option.href)}
-              >
-                <span>{option.label}</span>
-                {#if findTripValue === option.href}
-                  <span class="text-[10px] text-muted-foreground">Default</span>
-                {/if}
-              </button>
-            {/each}
-          </div>
-        {/if}
-      </div>
+          {#if findTripOpen}
+            <div class="absolute left-0 top-full z-[1300] mt-1 w-44 rounded-md border border-border/70 bg-card shadow-lg">
+              {#each findTripOptions as option}
+                <button
+                  class={`flex w-full items-center justify-between px-3 py-2 text-xs transition
+                    ${findTripValue === option.href ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted/70'}`}
+                  on:click={() => handleFindTripSelect(option.href)}
+                >
+                  <span>{option.label}</span>
+                  {#if findTripValue === option.href}
+                    <span class="text-[10px] text-muted-foreground">Default</span>
+                  {/if}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
 
       {#each navItems as item}
         <button
