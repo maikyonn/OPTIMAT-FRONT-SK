@@ -1,10 +1,11 @@
 <script>
   import { onMount } from 'svelte';
-  import { fade } from 'svelte/transition';
-  import TripRouteMap from '../../components/TripRouteMap.svelte';
-  import { getTripRecordPairsGrouped } from '$lib/api';
-  import { Button } from '$lib/components/ui/button';
-  import * as Resizable from '$lib/components/ui/resizable/index.js';
+	  import { fade } from 'svelte/transition';
+	  import TripRouteMap from '../../components/TripRouteMap.svelte';
+	  import { getTripRecordPairsGrouped } from '$lib/api';
+	  import { decodePolyline } from '$lib/utils/decodePolyline';
+	  import { Button } from '$lib/components/ui/button';
+	  import * as Resizable from '$lib/components/ui/resizable/index.js';
 
   export let providerId = null;
   export let mockEnabled = false;
@@ -87,45 +88,10 @@
   const formatMinutes = (value) =>
     value == null || Number.isNaN(Number(value)) ? '—' : `${Number(value).toFixed(1)} min`;
 
-  function decodePolyline(encoded) {
-    if (!encoded) return [];
-    let index = 0;
-    const len = encoded.length;
-    const coordinates = [];
-    let lat = 0;
-    let lng = 0;
-
-    while (index < len) {
-      let b;
-      let shift = 0;
-      let result = 0;
-      do {
-        b = encoded.charCodeAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-      const deltaLat = (result & 1) ? ~(result >> 1) : result >> 1;
-      lat += deltaLat;
-
-      shift = 0;
-      result = 0;
-      do {
-        b = encoded.charCodeAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-      const deltaLng = (result & 1) ? ~(result >> 1) : result >> 1;
-      lng += deltaLng;
-
-      coordinates.push([lat / 1e5, lng / 1e5]);
-    }
-    return coordinates;
-  }
-
-  function mapCenterForSelection(groupedPairs) {
-    const allCoords = groupedPairs
-      .flatMap(getRoutesFromPair)
-      .flatMap((r) => r.coordinates);
+	  function mapCenterForSelection(groupedPairs) {
+	    const allCoords = groupedPairs
+	      .flatMap(getRoutesFromPair)
+	      .flatMap((r) => r.coordinates);
     if (allCoords.length === 0) return DEFAULT_CENTER;
     return centerFromCoords(allCoords);
   }

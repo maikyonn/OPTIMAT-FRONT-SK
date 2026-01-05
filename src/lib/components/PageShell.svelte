@@ -11,66 +11,90 @@
   export let fullWidth = false;
   export let appMode = false; // Desktop app mode - edge-to-edge, no margins
 
-  const defaultNavItems = [
-    { label: 'Providers', href: '/providers-info', icon: '🏢' },
-    { label: 'Provider Portal', href: '/provider-portal', icon: '👤' },
-    { label: 'Service Dashboard', href: '/trip-pairs', icon: '📊' },
-    { label: 'Universal Service Dashboard', href: '/universal-service-dashboard', icon: '🧭' },
-    { label: 'Architecture', href: '/architecture', icon: '🏗️' },
-    { label: 'API Docs', href: '/api-docs', icon: 'API' },
-    { label: 'Beta Signup', href: '/beta-signup', icon: '✨' }
-  ];
+	  const defaultNavItems = [
+	    { label: 'Providers', href: '/providers-info', icon: '🏢' },
+	    { label: 'Provider Portal', href: '/provider-portal', icon: '👤' },
+	    { label: 'Architecture', href: '/architecture', icon: '🏗️' },
+	    { label: 'API Docs', href: '/api-docs', icon: 'API' },
+	    { label: 'Beta Signup', href: '/beta-signup', icon: '✨' }
+	  ];
 
-  const findTripOptions = [
-    { label: 'Chat', href: '/chat' },
-    { label: 'Map', href: '/map' }
-  ];
+	  const findTripOptions = [
+	    { label: 'Chat', href: '/chat' },
+	    { label: 'Map', href: '/map' }
+	  ];
+	  const serviceDashboardOptions = [
+	    { label: 'Service Dashboard', href: '/trip-pairs' },
+	    { label: 'Universal Service Dashboard', href: '/universal-service-dashboard' }
+	  ];
 
-  export let navItems = defaultNavItems;
+	  export let navItems = defaultNavItems;
 
-  let currentPath = '/';
-  let findTripOpen = false;
-  let findTripValue = '/chat';
-  let findTripMenuRef;
-  $: findTripLabel = findTripValue === '/map' ? 'Map' : 'Chat';
-  $: showFindTrip = !(currentPath.startsWith('/provider-portal') || currentPath === '/staff');
+	  let currentPath = '/';
+	  let findTripOpen = false;
+	  let findTripValue = '/chat';
+	  let findTripMenuRef;
+	  let serviceDashOpen = false;
+	  let serviceDashValue = '/trip-pairs';
+	  let serviceDashMenuRef;
+	  $: findTripLabel = findTripValue === '/map' ? 'Map' : 'Chat';
+	  $: serviceDashLabel = serviceDashValue === '/universal-service-dashboard'
+	    ? 'Universal Service Dashboard'
+	    : 'Service Dashboard';
+	  $: showFindTrip = !(currentPath.startsWith('/provider-portal') || currentPath === '/staff');
 
-  onMount(() => {
-    currentPath = window.location.hash.replace('#', '') || '/';
-    findTripValue = currentPath === '/map' ? '/map' : '/chat';
-    // Listen for hash changes
-    const handleHashChange = () => {
-      currentPath = window.location.hash.replace('#', '') || '/';
-      findTripValue = currentPath === '/map' ? '/map' : '/chat';
-    };
-    window.addEventListener('hashchange', handleHashChange);
-    const handleWindowClick = (event) => {
-      if (!findTripOpen || !findTripMenuRef) return;
-      if (!findTripMenuRef.contains(event.target)) {
-        findTripOpen = false;
-      }
-    };
-    window.addEventListener('click', handleWindowClick);
-    return () => {
-      window.removeEventListener('hashchange', handleHashChange);
+	  onMount(() => {
+	    currentPath = window.location.hash.replace('#', '') || '/';
+	    findTripValue = currentPath === '/map' ? '/map' : '/chat';
+	    serviceDashValue = currentPath === '/universal-service-dashboard' ? '/universal-service-dashboard' : '/trip-pairs';
+	    // Listen for hash changes
+	    const handleHashChange = () => {
+	      currentPath = window.location.hash.replace('#', '') || '/';
+	      findTripValue = currentPath === '/map' ? '/map' : '/chat';
+	      serviceDashValue = currentPath === '/universal-service-dashboard' ? '/universal-service-dashboard' : '/trip-pairs';
+	    };
+	    window.addEventListener('hashchange', handleHashChange);
+	    const handleWindowClick = (event) => {
+	      if (findTripOpen && findTripMenuRef && !findTripMenuRef.contains(event.target)) {
+	        findTripOpen = false;
+	      }
+	      if (serviceDashOpen && serviceDashMenuRef && !serviceDashMenuRef.contains(event.target)) {
+	        serviceDashOpen = false;
+	      }
+	    };
+	    window.addEventListener('click', handleWindowClick);
+	    return () => {
+	      window.removeEventListener('hashchange', handleHashChange);
       window.removeEventListener('click', handleWindowClick);
     };
   });
 
-  function navigate(href: string) {
-    push(href);
-    currentPath = href;
-    findTripValue = href === '/map' ? '/map' : '/chat';
-    findTripOpen = false;
-  }
+	  function navigate(href: string) {
+	    push(href);
+	    currentPath = href;
+	    findTripValue = href === '/map' ? '/map' : '/chat';
+	    findTripOpen = false;
+	    serviceDashValue = href === '/universal-service-dashboard' ? '/universal-service-dashboard' : '/trip-pairs';
+	    serviceDashOpen = false;
+	  }
 
-  function toggleFindTripMenu() {
-    findTripOpen = !findTripOpen;
-  }
+	  function toggleFindTripMenu() {
+	    findTripOpen = !findTripOpen;
+	    if (findTripOpen) serviceDashOpen = false;
+	  }
 
-  function handleFindTripSelect(href: string) {
-    navigate(href);
-  }
+	  function handleFindTripSelect(href: string) {
+	    navigate(href);
+	  }
+
+	  function toggleServiceDashMenu() {
+	    serviceDashOpen = !serviceDashOpen;
+	    if (serviceDashOpen) findTripOpen = false;
+	  }
+
+	  function handleServiceDashSelect(href: string) {
+	    navigate(href);
+	  }
 </script>
 
 <div class="h-screen w-screen bg-background text-foreground flex flex-col">
@@ -89,8 +113,8 @@
 
     <!-- Navigation tabs -->
     <nav class="flex items-center gap-0.5">
-      {#if showFindTrip}
-        <div class="relative" bind:this={findTripMenuRef}>
+	      {#if showFindTrip}
+	        <div class="relative" bind:this={findTripMenuRef}>
           <button
             class={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition
               ${currentPath === '/chat' || currentPath === '/map'
@@ -124,13 +148,49 @@
               {/each}
             </div>
           {/if}
-        </div>
-      {/if}
+	        </div>
+	      {/if}
 
-      {#each navItems as item}
-        <button
-          class={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition
-            ${currentPath === item.href
+	      <div class="relative" bind:this={serviceDashMenuRef}>
+	        <button
+	          class={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition
+	            ${currentPath === '/trip-pairs' || currentPath === '/trip-records' || currentPath === '/universal-service-dashboard'
+	              ? 'bg-primary text-primary-foreground'
+	              : 'hover:bg-muted text-muted-foreground hover:text-foreground'}`}
+	          aria-haspopup="menu"
+	          aria-expanded={serviceDashOpen}
+	          on:click|stopPropagation={toggleServiceDashMenu}
+	        >
+	          <span class="text-[10px] uppercase tracking-wide">Service Dashboards</span>
+	          <span class="text-[10px] text-muted-foreground">•</span>
+	          <span>{serviceDashLabel}</span>
+	          <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+	            <path d="M6 9l6 6 6-6" />
+	          </svg>
+	        </button>
+
+	        {#if serviceDashOpen}
+	          <div class="absolute left-0 top-full z-[1300] mt-1 w-64 rounded-md border border-border/70 bg-card shadow-lg">
+	            {#each serviceDashboardOptions as option}
+	              <button
+	                class={`flex w-full items-center justify-between px-3 py-2 text-xs transition
+	                  ${serviceDashValue === option.href ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted/70'}`}
+	                on:click={() => handleServiceDashSelect(option.href)}
+	              >
+	                <span>{option.label}</span>
+	                {#if serviceDashValue === option.href}
+	                  <span class="text-[10px] text-muted-foreground">Default</span>
+	                {/if}
+	              </button>
+	            {/each}
+	          </div>
+	        {/if}
+	      </div>
+
+	      {#each navItems as item}
+	        <button
+	          class={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition
+	            ${currentPath === item.href
               ? 'bg-primary text-primary-foreground'
               : 'hover:bg-muted text-muted-foreground hover:text-foreground'}`}
           on:click={() => navigate(item.href)}

@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { fade } from 'svelte/transition';
-  import PageShell from '$lib/components/PageShell.svelte';
-  import TripRouteMap from '../components/TripRouteMap.svelte';
-  import { Button } from '$lib/components/ui/button';
-  import * as Resizable from '$lib/components/ui/resizable/index.js';
+	  import { onMount } from 'svelte';
+	  import { fade } from 'svelte/transition';
+	  import PageShell from '$lib/components/PageShell.svelte';
+	  import TripRouteMap from '../components/TripRouteMap.svelte';
+	  import { getAllProviders, getDirections, isApiConfigured, type Provider as ApiProvider } from '$lib/api';
+	  import { decodePolyline, type LatLng } from '$lib/utils/decodePolyline';
+	  import { Button } from '$lib/components/ui/button';
+	  import * as Resizable from '$lib/components/ui/resizable/index.js';
 
   type Provider = {
     id: string;
@@ -13,44 +15,111 @@
     color: string;
   };
 
-  type Trip = {
-    id: string;
-    providerId: string;
-    providerName: string;
-    date: string;
-    origin: [number, number];
-    destination: [number, number];
-    distanceMiles: number;
-  };
+	  type Trip = {
+	    id: string;
+	    providerId: string;
+	    providerName: string;
+	    date: string;
+	    origin: [number, number];
+	    destination: [number, number];
+	    distanceMiles: number;
+	  };
 
-  const providers: Provider[] = [
-    { id: 'delta', name: 'Delta Transit', center: [37.975, -121.816], color: '#0ea5e9' },
-    { id: 'bay-access', name: 'Bay Access Mobility', center: [37.915, -121.998], color: '#22c55e' },
-    { id: 'solano-link', name: 'Solano Link', center: [38.055, -121.915], color: '#f97316' },
-    { id: 'tri-valley', name: 'Tri Valley Connect', center: [37.885, -121.765], color: '#6366f1' },
-    { id: 'sierra-care', name: 'Sierra Care', center: [38.005, -121.715], color: '#14b8a6' },
-    { id: 'contra-ride', name: 'Contra Ride', center: [37.945, -121.705], color: '#e11d48' }
-  ];
+	  type DrivingRoute = {
+	    trip_id: string;
+	    coordinates: LatLng[];
+	  };
 
-  const defaultCenter: [number, number] = [37.965, -121.84];
-  const defaultZoom = 11;
+	  const baseProviders: Provider[] = [
+	    { id: 'delta', name: 'Delta Transit', center: [37.975, -121.816], color: '#0ea5e9' },
+	    { id: 'bay-access', name: 'Bay Access Mobility', center: [37.915, -121.998], color: '#22c55e' },
+	    { id: 'solano-link', name: 'Solano Link', center: [38.055, -121.915], color: '#f97316' },
+	    { id: 'tri-valley', name: 'Tri Valley Connect', center: [37.885, -121.765], color: '#6366f1' },
+	    { id: 'sierra-care', name: 'Sierra Care', center: [38.005, -121.715], color: '#14b8a6' },
+	    { id: 'contra-ride', name: 'Contra Ride', center: [37.945, -121.705], color: '#e11d48' },
+	    { id: 'east-bay-shuttle', name: 'East Bay Shuttle', center: [37.925, -121.86], color: '#a855f7' },
+	    { id: 'valley-ride', name: 'Valley Ride', center: [38.02, -121.88], color: '#facc15' }
+	  ];
 
-  let trips: Trip[] = [];
-  let availableDates: string[] = [];
-  let selectedProvider = 'all';
-  let selectedDate = 'all';
-  let selectedTripId: string | null = null;
-  let mapKey = 'universal-service-map';
+	  const MAX_GOOGLE_ROUTES = 30;
+	  const GOOGLE_ROUTES_CONCURRENCY = 4;
 
-  const providerLookup = new Map(providers.map((provider) => [provider.id, provider]));
+	  const defaultCenter: [number, number] = [37.965, -121.84];
+	  const defaultZoom = 11;
 
-  onMount(() => {
-    regenerateTrips();
-  });
+	  let providers: Provider[] = baseProviders;
+	  let providerLookup: Map<string, Provider> = new Map();
+	  let providerLoadError: string | null = null;
 
-  function randomInt(min: number, max: number) {
-    return Math.floor(Math.random() * (max - min + 1)) + min;
-  }
+	  let trips: Trip[] = [];
+	  let availableDates: string[] = [];
+	  let selectedProvider = 'all';
+	  let selectedDate = 'all';
+	  let selectedTripId: string | null = null;
+	  let mapKey = 'universal-service-map';
+	  let dataVersion = Date.now();
+	  let googleRoutesLoading = false;
+	  let googleRoutesError: string | null = null;
+	  let googleRouteCoordinatesByTripId: Record<string, LatLng[]> = {};
+	  let googleRouteErrorsByTripId: Record<string, string> = {};
+	  let googleRoutesRequestKey = '';
+	  let googleRoutesRequestToken = 0;
+
+	  $: providerLookup = new Map(providers.map((provider) => [provider.id, provider]));
+
+	  onMount(() => {
+	    void initialize();
+	  });
+
+	  async function initialize() {
+	    await loadRandomProviderNames();
+	    regenerateTrips();
+	  }
+
+	  function shuffleInPlace<T>(items: T[]) {
+	    for (let i = items.length - 1; i > 0; i -= 1) {
+	      const j = Math.floor(Math.random() * (i + 1));
+	      const tmp = items[i];
+	      items[i] = items[j];
+	      items[j] = tmp;
+	    }
+	    return items;
+	  }
+
+	  async function loadRandomProviderNames() {
+	    providerLoadError = null;
+
+	    const { data, error } = await getAllProviders();
+	    if (error) {
+	      providerLoadError = error.message;
+	      return;
+	    }
+
+	    const allProviderNames = Array.from(
+	      new Set(
+	        (data ?? [])
+	          .map((provider: ApiProvider) => provider.provider_name)
+	          .filter((name): name is string => typeof name === 'string' && name.trim().length > 0)
+	      )
+	    );
+
+	    if (!allProviderNames.length) {
+	      providerLoadError = 'No providers found.';
+	      return;
+	    }
+
+	    shuffleInPlace(allProviderNames);
+	    const selectedNames = allProviderNames.slice(0, providers.length);
+
+	      providers = providers.map((provider, index) => ({
+	        ...provider,
+	        name: selectedNames[index] ?? provider.name
+	      }));
+	  }
+
+	  function randomInt(min: number, max: number) {
+	    return Math.floor(Math.random() * (max - min + 1)) + min;
+	  }
 
   function randomOffset(maxDelta: number) {
     return (Math.random() - 0.5) * maxDelta * 2;
@@ -102,15 +171,20 @@
     return Array.from(unique).sort((a, b) => (a < b ? 1 : -1));
   }
 
-  function regenerateTrips() {
-    const nextTrips = generateTrips();
-    trips = nextTrips;
-    availableDates = buildAvailableDates(nextTrips);
-    selectedProvider = 'all';
-    selectedDate = 'all';
-    selectedTripId = null;
-    mapKey = `universal-${Date.now()}`;
-  }
+	  function regenerateTrips() {
+	    const nextTrips = generateTrips();
+	    trips = nextTrips;
+	    availableDates = buildAvailableDates(nextTrips);
+	    selectedProvider = 'all';
+	    selectedDate = 'all';
+	    selectedTripId = null;
+	    dataVersion = Date.now();
+	    googleRoutesLoading = false;
+	    googleRoutesError = null;
+	    googleRouteCoordinatesByTripId = {};
+	    googleRouteErrorsByTripId = {};
+	    googleRoutesRequestKey = '';
+	  }
 
   function averageDistance(data: Trip[]) {
     if (!data.length) return null;
@@ -128,24 +202,30 @@
 
   $: dateFilteredTrips = trips.filter((trip) => selectedDate === 'all' || trip.date === selectedDate);
   $: filteredTrips = dateFilteredTrips.filter((trip) => selectedProvider === 'all' || trip.providerId === selectedProvider);
-  $: selectedTrip = selectedTripId
-    ? filteredTrips.find((trip) => trip.id === selectedTripId) || null
-    : null;
+	  $: selectedTrip = selectedTripId
+	    ? filteredTrips.find((trip) => trip.id === selectedTripId) || null
+	    : null;
 
   $: providerSummaries = providers.map((provider) => ({
     ...provider,
     count: dateFilteredTrips.filter((trip) => trip.providerId === provider.id).length
   }));
 
-  $: overlaySegments = filteredTrips.map((trip) => {
-    const provider = providerLookup.get(trip.providerId);
-    return {
-      id: trip.id,
-      origin: trip.origin,
-      destination: trip.destination,
-      color: provider?.color ?? '#6366f1'
-    };
-  });
+	  $: googleRoutesLoadedCount = filteredTrips
+	    .slice(0, MAX_GOOGLE_ROUTES)
+	    .filter((trip) => (googleRouteCoordinatesByTripId[trip.id]?.length ?? 0) > 0).length;
+	  $: googleRoutesTargetCount = Math.min(filteredTrips.length, MAX_GOOGLE_ROUTES);
+
+	  $: googleDrivingRoutes = filteredTrips
+	    .slice(0, MAX_GOOGLE_ROUTES)
+	    .map((trip) => {
+	      const coordinates = googleRouteCoordinatesByTripId[trip.id];
+	      if (!coordinates?.length) return null;
+	      return { trip_id: trip.id, coordinates } satisfies DrivingRoute;
+	    })
+	    .filter(Boolean) as DrivingRoute[];
+
+	  $: selectedRouteCoordinates = selectedTripId ? googleRouteCoordinatesByTripId[selectedTripId] ?? [] : [];
 
   $: providerCount = new Set(filteredTrips.map((trip) => trip.providerId)).size;
   $: avgDistanceMiles = averageDistance(filteredTrips);
@@ -167,16 +247,24 @@
     });
     return [lat / points, lng / points] as [number, number];
   })();
-  $: mapZoom = selectedTrip ? 13 : defaultZoom;
+	  $: mapZoom = selectedTrip ? 13 : defaultZoom;
 
-  $: if (trips.length) {
-    mapKey = `universal-${selectedProvider}-${selectedDate}-${filteredTrips.length}`;
-  }
+	  $: if (trips.length) {
+	    mapKey = `universal-${dataVersion}-${selectedProvider}-${selectedDate}-${filteredTrips.length}`;
+	  }
 
-  function handleProviderFilter(event: Event) {
-    selectedProvider = (event.target as HTMLSelectElement).value;
-    selectedTripId = null;
-  }
+	  $: {
+	    const nextKey = `google-${dataVersion}-${selectedProvider}-${selectedDate}-${filteredTrips.length}-${selectedTripId ?? 'none'}`;
+	    if (nextKey !== googleRoutesRequestKey) {
+	      googleRoutesRequestKey = nextKey;
+	      void hydrateGoogleRoutes();
+	    }
+	  }
+
+	  function handleProviderFilter(event: Event) {
+	    selectedProvider = (event.target as HTMLSelectElement).value;
+	    selectedTripId = null;
+	  }
 
   function handleDateFilter(event: Event) {
     selectedDate = (event.target as HTMLSelectElement).value;
@@ -197,10 +285,76 @@
     return providerLookup.get(selectedProvider)?.name ?? 'Provider';
   }
 
-  function dateLabel() {
-    return selectedDate === 'all' ? 'All dates' : selectedDate;
-  }
-</script>
+	  function dateLabel() {
+	    return selectedDate === 'all' ? 'All dates' : selectedDate;
+	  }
+
+	  async function hydrateGoogleRoutes() {
+	    if (!isApiConfigured()) {
+	      googleRoutesLoading = false;
+	      googleRoutesError = 'Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.';
+	      return;
+	    }
+
+	    const candidates: Trip[] = filteredTrips.slice(0, MAX_GOOGLE_ROUTES);
+	    if (selectedTrip && !candidates.some((trip) => trip.id === selectedTrip.id)) {
+	      candidates.push(selectedTrip);
+	    }
+
+	    const missingTrips = candidates.filter((trip) => {
+	      const hasCoords = Object.prototype.hasOwnProperty.call(googleRouteCoordinatesByTripId, trip.id);
+	      const hasError = Object.prototype.hasOwnProperty.call(googleRouteErrorsByTripId, trip.id);
+	      return !hasCoords && !hasError;
+	    });
+
+	    if (!missingTrips.length) return;
+
+	    googleRoutesLoading = true;
+	    googleRoutesError = null;
+	    const token = (googleRoutesRequestToken += 1);
+
+	    try {
+	      for (let i = 0; i < missingTrips.length; i += GOOGLE_ROUTES_CONCURRENCY) {
+	        if (token !== googleRoutesRequestToken) return;
+
+	        const batch = missingTrips.slice(i, i + GOOGLE_ROUTES_CONCURRENCY);
+	        const results = await Promise.allSettled(
+	          batch.map(async (trip) => {
+	            const origin = `${trip.origin[0]},${trip.origin[1]}`;
+	            const destination = `${trip.destination[0]},${trip.destination[1]}`;
+	            const { data, error } = await getDirections({ origin, destination, mode: 'driving' });
+	            if (error) throw error;
+	            if (!data?.success) throw new Error(data?.error ?? 'Directions lookup failed.');
+	            if (!data.polyline) throw new Error('Directions response missing polyline.');
+
+	            return decodePolyline(data.polyline);
+	          })
+	        );
+
+	        const nextCoordinatesByTripId = { ...googleRouteCoordinatesByTripId };
+	        const nextErrorsByTripId = { ...googleRouteErrorsByTripId };
+
+	        results.forEach((result, idx) => {
+	          const trip = batch[idx];
+	          if (result.status === 'fulfilled') {
+	            nextCoordinatesByTripId[trip.id] = result.value;
+	          } else {
+	            nextErrorsByTripId[trip.id] = result.reason instanceof Error ? result.reason.message : String(result.reason);
+	          }
+	        });
+
+	        googleRouteCoordinatesByTripId = nextCoordinatesByTripId;
+	        googleRouteErrorsByTripId = nextErrorsByTripId;
+	      }
+	    } catch (err) {
+	      googleRoutesError = err instanceof Error ? err.message : String(err);
+	    } finally {
+	      if (token === googleRoutesRequestToken) {
+	        googleRoutesLoading = false;
+	      }
+	    }
+	  }
+	</script>
 
 <PageShell
   title="Universal Service Dashboard"
@@ -209,30 +363,51 @@
 >
   <Resizable.PaneGroup direction="horizontal" class="flex-1 h-full">
     <Resizable.Pane defaultSize={65} minSize={40} class="relative">
-      <Resizable.PaneGroup direction="vertical" class="h-full">
-        <Resizable.Pane defaultSize={62} minSize={40} class="relative">
-          <div class="absolute inset-0" in:fade={{ duration: 400 }}>
-            <div class="absolute top-4 left-4 z-10 rounded-xl border border-border/70 bg-background/90 px-4 py-3 shadow">
-              <div class="text-xs uppercase tracking-wide text-muted-foreground">Map view</div>
-              <div class="text-sm font-semibold">
-                {filteredTrips.length} routes across {providerCount || 0} providers
-              </div>
-              <div class="mt-1 text-xs text-muted-foreground">{providerLabel()} - {dateLabel()}</div>
-            </div>
-            {#if filteredTrips.length === 0}
-              <div class="flex h-full items-center justify-center text-sm text-muted-foreground">No routes match the current filters.</div>
-            {:else}
-              <TripRouteMap
-                mapKey={mapKey}
-                center={mapCenter}
-                zoom={mapZoom}
-                overlayMode="segments"
-                overlaySegments={overlaySegments}
-                selectedTripId={selectedTripId}
-              />
-            {/if}
-          </div>
-        </Resizable.Pane>
+	      <Resizable.PaneGroup direction="vertical" class="h-full">
+	        <Resizable.Pane defaultSize={62} minSize={40} class="relative">
+	          <div class="absolute inset-0" in:fade={{ duration: 400 }}>
+	            <div class="absolute top-4 left-4 z-10 rounded-xl border border-border/70 bg-background/90 px-4 py-3 shadow">
+	              <div class="text-xs uppercase tracking-wide text-muted-foreground">Map view</div>
+	              <div class="text-sm font-semibold">
+	                {filteredTrips.length} routes across {providerCount || 0} providers
+	              </div>
+	              <div class="mt-1 text-xs text-muted-foreground">{providerLabel()} - {dateLabel()}</div>
+	              <div class="mt-2 text-xs text-muted-foreground">
+	                {#if !isApiConfigured()}
+	                  Supabase not configured; unable to load Google directions.
+	                {:else}
+	                  Google routes: {googleRoutesLoadedCount}/{googleRoutesTargetCount}
+	                  {#if filteredTrips.length > MAX_GOOGLE_ROUTES}
+	                    (showing first {MAX_GOOGLE_ROUTES})
+	                  {/if}
+	                  {#if googleRoutesLoading}
+	                    · Loading…
+	                  {/if}
+	                {/if}
+	                {#if googleRoutesError}
+	                  <div class="mt-1 text-xs text-destructive">{googleRoutesError}</div>
+	                {/if}
+	              </div>
+	            </div>
+	            {#if filteredTrips.length === 0}
+	              <div class="flex h-full items-center justify-center text-sm text-muted-foreground">No routes match the current filters.</div>
+	            {:else}
+	              <TripRouteMap
+	                mapKey={mapKey}
+	                center={mapCenter}
+	                zoom={mapZoom}
+	                overlayMode="driving"
+	                overlaySegments={[]}
+	                drivingRoutes={googleDrivingRoutes}
+	                transitRoutes={[]}
+	                routeCoordinates={selectedRouteCoordinates}
+	                routeMode="selected"
+	                selectedTripId={selectedTripId}
+	                heatPoints={[]}
+	              />
+	            {/if}
+	          </div>
+	        </Resizable.Pane>
 
         <Resizable.Handle withHandle />
 
@@ -321,14 +496,17 @@
         </div>
       </div>
 
-      <div class="flex-shrink-0 px-3 pt-3">
-        <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Provider legend</div>
-        <div class="mt-2 flex flex-wrap gap-2">
-          {#each providerSummaries as provider}
-            <button
-              class={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs transition ${selectedProvider === provider.id ? 'border-primary bg-primary/10' : 'border-border/70 hover:border-primary/50'}`}
-              on:click={() => selectProviderFromList(provider.id)}
-            >
+	      <div class="flex-shrink-0 px-3 pt-3">
+	        <div class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Provider legend</div>
+	        {#if providerLoadError}
+	          <div class="mt-2 text-xs text-destructive">{providerLoadError}</div>
+	        {/if}
+	        <div class="mt-2 flex flex-wrap gap-2">
+	          {#each providerSummaries as provider}
+	            <button
+	              class={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs transition ${selectedProvider === provider.id ? 'border-primary bg-primary/10' : 'border-border/70 hover:border-primary/50'}`}
+	              on:click={() => selectProviderFromList(provider.id)}
+	            >
               <span class="h-2 w-2 rounded-full" style={`background:${provider.color}`}></span>
               <span>{provider.name}</span>
               <span class="text-muted-foreground">{provider.count}</span>
