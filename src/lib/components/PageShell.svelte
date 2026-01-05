@@ -12,7 +12,7 @@
   export let appMode = false; // Desktop app mode - edge-to-edge, no margins
 
 	  const defaultNavItems = [
-	    { label: 'Providers', href: '/providers-info', icon: '🏢' },
+	    { label: 'Service Map', href: '/providers-info', icon: '🏢' },
 	    { label: 'Provider Portal', href: '/provider-portal', icon: '👤' },
 	    { label: 'Architecture', href: '/architecture', icon: '🏗️' },
 	    { label: 'API Docs', href: '/api-docs', icon: 'API' },
