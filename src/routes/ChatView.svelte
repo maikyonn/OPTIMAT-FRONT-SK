@@ -503,6 +503,109 @@
     return formatted.join(', ');
   }
 
+  function pickFirstNonEmptyString(...values) {
+    for (const value of values) {
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return null;
+  }
+
+  function normalizeScheduleType(scheduleTypeValue) {
+    if (!scheduleTypeValue) return null;
+
+    let scheduleType = scheduleTypeValue;
+    if (typeof scheduleType === 'string') {
+      try {
+        scheduleType = JSON.parse(scheduleType);
+      } catch {
+        return { type: scheduleType, advance_notice: null };
+      }
+    }
+
+    if (!scheduleType || typeof scheduleType !== 'object') return null;
+
+    const nested =
+      scheduleType.schedule_type && typeof scheduleType.schedule_type === 'object'
+        ? scheduleType.schedule_type
+        : null;
+
+    const type = pickFirstNonEmptyString(
+      scheduleType.type,
+      scheduleType.schedule_type,
+      scheduleType.scheduleType,
+      nested?.type,
+      nested?.schedule_type,
+      nested?.scheduleType
+    );
+
+    const advance_notice = pickFirstNonEmptyString(
+      scheduleType.advance_notice,
+      scheduleType.advanceNotice,
+      nested?.advance_notice,
+      nested?.advanceNotice
+    );
+
+    return { type, advance_notice };
+  }
+
+  function formatAdvanceNotice(advanceNotice) {
+    if (!advanceNotice) return null;
+
+    const raw = String(advanceNotice).trim();
+    if (!raw) return null;
+
+    const normalized = raw.toLowerCase().replace(/\s+/g, '');
+
+    const rangeMatch = normalized.match(/^(\d+)-(\d+)([a-z]+)$/);
+    if (rangeMatch) {
+      const [, startRaw, endRaw, unitRaw] = rangeMatch;
+      const start = parseInt(startRaw, 10);
+      const end = parseInt(endRaw, 10);
+      const unit = unitRaw;
+      const unitLabel = normalizeAdvanceNoticeUnit(unit, Math.max(start, end));
+      if (unitLabel) return `${start}–${end} ${unitLabel}`;
+      return raw;
+    }
+
+    const match = normalized.match(/^(\d+)([a-z]+)$/);
+    if (!match) return raw;
+
+    const [, amountRaw, unitRaw] = match;
+    const amount = parseInt(amountRaw, 10);
+    if (Number.isNaN(amount)) return raw;
+
+    const unitLabel = normalizeAdvanceNoticeUnit(unitRaw, amount);
+    if (!unitLabel) return raw;
+
+    return `${amount} ${unitLabel}`;
+  }
+
+  function normalizeAdvanceNoticeUnit(unit, amount) {
+    const singular = amount === 1;
+
+    if (unit === 'd' || unit === 'day' || unit === 'days') return singular ? 'day' : 'days';
+    if (unit === 'h' || unit === 'hr' || unit === 'hrs' || unit === 'hour' || unit === 'hours') return singular ? 'hour' : 'hours';
+    if (unit === 'm' || unit === 'min' || unit === 'mins' || unit === 'minute' || unit === 'minutes') return singular ? 'minute' : 'minutes';
+    if (unit === 'w' || unit === 'wk' || unit === 'wks' || unit === 'week' || unit === 'weeks') return singular ? 'week' : 'weeks';
+
+    return null;
+  }
+
+  function getBookingNotice(provider) {
+    const meta = normalizeScheduleType(provider?.schedule_type);
+    if (!meta?.type) return null;
+
+    if (meta.type === 'in-advance-book') {
+      const notice = formatAdvanceNotice(meta.advance_notice);
+      return notice ? `Book ${notice} in advance` : 'Book in advance';
+    }
+
+    if (meta.type === 'real-time-book') return 'Book in real time';
+    if (meta.type === 'fixed-schedules') return 'Fixed schedules';
+
+    return null;
+  }
+
   function getEstimatedTime(providerId) {
     // Generate consistent random time based on provider ID
     const hash = providerId?.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0) || 0;
@@ -711,10 +814,12 @@
                           </div>
                         {/if}
 
-                        <div class="flex items-center gap-1.5 text-amber-600">
-                          <span class="shrink-0">⏰</span>
-                          <span class="font-medium">1-3 days notice</span>
-                        </div>
+                        {#if getBookingNotice(provider)}
+                          <div class="flex items-center gap-1.5 text-amber-600">
+                            <span class="shrink-0">⏰</span>
+                            <span class="font-medium">{getBookingNotice(provider)}</span>
+                          </div>
+                        {/if}
                       </div>
                     </button>
                   {/each}
