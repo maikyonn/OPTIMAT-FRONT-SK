@@ -12,15 +12,15 @@
   export let appMode = false; // Desktop app mode - edge-to-edge, no margins
 
 	  const defaultNavItems = [
-	    { label: 'Service Map', href: '/providers-info', icon: '🏢' },
-	    { label: 'Provider Portal', href: '/provider-portal', icon: '👤' },
-	    { label: 'Architecture', href: '/architecture', icon: '🏗️' },
+	    { label: 'Service Map', href: '/providers-info' },
+	    { label: 'Provider Portal', href: '/provider-portal' },
+	    { label: 'Architecture', href: '/architecture' },
 	    { label: 'API Docs', href: '/api-docs', icon: 'API' },
-	    { label: 'Beta Signup', href: '/beta-signup', icon: '✨' }
+	    { label: 'Beta Signup', href: '/beta-signup' }
 	  ];
 
 	  const findTripOptions = [
-	    { label: 'Chat', href: '/chat' },
+	    { label: 'Find Your Trip', href: '/chat' },
 	    { label: 'Map', href: '/map' }
 	  ];
 	  const serviceDashboardOptions = [
@@ -37,7 +37,7 @@
 	  let serviceDashOpen = false;
 	  let serviceDashValue = '/trip-pairs';
 	  let serviceDashMenuRef;
-	  $: findTripLabel = findTripValue === '/map' ? 'Map' : 'Chat';
+	  $: findTripLabel = findTripValue === '/map' ? 'Map' : 'Find Your Trip';
 	  $: serviceDashLabel = serviceDashValue === '/universal-service-dashboard'
 	    ? 'Universal Service Dashboard'
 	    : 'Service Dashboard';
@@ -124,8 +124,6 @@
             aria-expanded={findTripOpen}
             on:click|stopPropagation={toggleFindTripMenu}
           >
-            <span class="text-[10px] uppercase tracking-wide">Find your Trip</span>
-            <span class="text-[10px] text-muted-foreground">•</span>
             <span>{findTripLabel}</span>
             <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M6 9l6 6 6-6" />
@@ -161,8 +159,6 @@
 	          aria-expanded={serviceDashOpen}
 	          on:click|stopPropagation={toggleServiceDashMenu}
 	        >
-	          <span class="text-[10px] uppercase tracking-wide">Service Dashboards</span>
-	          <span class="text-[10px] text-muted-foreground">•</span>
 	          <span>{serviceDashLabel}</span>
 	          <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 	            <path d="M6 9l6 6 6-6" />
