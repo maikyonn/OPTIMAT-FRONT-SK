@@ -2,6 +2,25 @@
 
 This directory contains Supabase Edge Functions for the OPTIMAT transportation platform, migrated from the OPTIMAT-FASTAPI service.
 
+## Deployed Edge Function Endpoints (OPTIMAT)
+
+Base URL: `https://htjohidcoyfuwfjecazu.supabase.co/functions/v1`
+
+| Function | JWT verification | Example |
+|----------|------------------|---------|
+| `health` | off | `GET /health` |
+| `providers` | off | `GET /providers` |
+| `geocode` | off | `GET /geocode?address=...` |
+| `directions` | off | `POST /directions` |
+| `conversations` | off | `GET /conversations` |
+| `messages` | off | `GET /messages?conversation_id=...` |
+| `tool-calls` | off | `GET /tool-calls?conversation_id=...` |
+| `replay` | off | `GET /replay?conversation_id=...` |
+| `tri-delta-transit` | off | `GET /tri-delta-transit/trips` |
+| `chat` | on | `POST /chat` |
+| `chat-examples` | on | `GET /chat-examples` |
+| `trip-records` | on | `GET /trip-records/pairs` |
+
 ## Functions Overview
 
 | Function | Description |

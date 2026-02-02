@@ -516,6 +516,13 @@ export class ServiceZoneManager {
 
     // Normalize eligibility_reqs to array of strings
     let elig = provider.eligibility_reqs;
+    if (typeof elig === 'string') {
+      try {
+        elig = JSON.parse(elig);
+      } catch {
+        // ignore
+      }
+    }
     if (elig && !Array.isArray(elig) && typeof elig === 'object' && Array.isArray(elig.eligibility_reqs)) {
       elig = elig.eligibility_reqs;
     }
@@ -523,7 +530,21 @@ export class ServiceZoneManager {
       elig = [String(elig)];
     }
 
-    if (Array.isArray(elig) && elig.length) parts.push(`Eligibility: ${elig.join(', ')}`);
+    if (Array.isArray(elig) && elig.length) {
+      const formatted = elig
+        .map((req) => {
+          if (typeof req === 'string') return req;
+          if (req && typeof req === 'object') {
+            const type = typeof req.type === 'string' ? req.type : '';
+            const proof = typeof req.proof === 'string' ? req.proof : '';
+            if (type && proof) return `${type} (${proof})`;
+            if (type) return type;
+          }
+          return String(req);
+        })
+        .filter(Boolean);
+      if (formatted.length) parts.push(`Eligibility: ${formatted.join(', ')}`);
+    }
     return parts.join('\n');
   }
 

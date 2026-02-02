@@ -4,6 +4,7 @@
   import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
+  import { formatScheduleType } from '$lib/providers/providerFields';
   const dispatch = createEventDispatcher();
 
   // Helper function to format datetime-local string
@@ -169,7 +170,9 @@
     try {
       const booking = typeof bookingValue === 'string' ? JSON.parse(bookingValue) : bookingValue;
       if (!booking) return null;
-      return booking.call || booking.phone || booking.contact || null;
+      if (booking.method === 'call' && typeof booking.details === 'string') return booking.details;
+      const phone = booking.call || booking.phone || booking.contact;
+      return typeof phone === 'string' ? phone : null;
     } catch {
       return null;
     }
@@ -260,13 +263,7 @@
                   {#if provider.schedule_type}
                     <div class="flex">
                       <dt class="font-medium w-24">Schedule:</dt>
-                      <dd>{
-                        (() => {
-                          const st = provider.schedule_type;
-                          if (typeof st === 'object' && st.schedule_type) return st.schedule_type.replace(/-/g,' ');
-                          return st.toString().replace(/-/g,' ');
-                        })()
-                      }</dd>
+                      <dd>{formatScheduleType(provider.schedule_type) || 'Schedule varies'}</dd>
                     </div>
                   {/if}
                   <div class="flex">

@@ -6,9 +6,25 @@
   import PageShell from '$lib/components/PageShell.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
-  import { Textarea } from '$lib/components/ui/textarea';
+  import ScheduleTypeEditor from '$lib/components/providers/ScheduleTypeEditor.svelte';
+  import EligibilityReqsEditor from '$lib/components/providers/EligibilityReqsEditor.svelte';
+  import BookingEditor from '$lib/components/providers/BookingEditor.svelte';
+  import FareEditor from '$lib/components/providers/FareEditor.svelte';
+  import ContactsEditor from '$lib/components/providers/ContactsEditor.svelte';
+  import ServiceZoneEditor from '$lib/components/providers/ServiceZoneEditor.svelte';
   import * as Resizable from '$lib/components/ui/resizable/index.js';
   import { getAllProviders, updateProvider } from '$lib/api';
+  import {
+    PROVIDER_TYPE_OPTIONS,
+    ROUTING_TYPE_OPTIONS,
+    formatBooking,
+    formatContacts,
+    formatEligibilityReqs,
+    formatFare,
+    formatScheduleType,
+    formatServiceZone,
+    tryParseJson,
+  } from '$lib/providers/providerFields';
 
   let mounted = false;
   let providers = [];
@@ -19,6 +35,7 @@
   let saving = false;
   let saveError = null;
   let saveSuccess = false;
+  let jsonEnabled = false;
 
   // Editable form data
   let editForm = {};
@@ -44,6 +61,7 @@
     if (savedStyle) {
       currentMapStyleId = savedStyle.id;
     }
+    jsonEnabled = localStorage.getItem('optimat-provider-json') === 'true';
     await loadProviders();
   });
 
@@ -74,6 +92,11 @@
     currentMapStyleId = style.id;
     localStorage.setItem('optimat-map-style', style.id);
     mapKey = Date.now().toString();
+  }
+
+  function toggleJsonEnabled() {
+    jsonEnabled = !jsonEnabled;
+    localStorage.setItem('optimat-provider-json', String(jsonEnabled));
   }
 
   function selectProvider(provider) {
@@ -123,13 +146,8 @@
 
   function enableEditMode() {
     editMode = true;
-    // Copy provider data, converting object fields to JSON strings for editing
+    // Copy provider data for editing
     editForm = { ...selectedProvider };
-
-    // Convert service_zone object to formatted JSON string for textarea editing
-    if (editForm.service_zone && typeof editForm.service_zone === 'object') {
-      editForm.service_zone = JSON.stringify(editForm.service_zone, null, 2);
-    }
 
     saveSuccess = false;
     saveError = null;
@@ -151,14 +169,18 @@
     try {
       const providerId = selectedProvider.provider_id || selectedProvider.id;
 
-      // Only send updatable fields to the API
-      // service_zone might be an object (GeoJSON), needs to be stringified
-      let serviceZoneValue = editForm.service_zone;
-      if (serviceZoneValue && typeof serviceZoneValue === 'object') {
-        serviceZoneValue = JSON.stringify(serviceZoneValue);
+      function canonicalizeForDiff(v) {
+        if (v === undefined) return '__undefined__';
+        const parsed = tryParseJson(v);
+        if (parsed === undefined) return '__undefined__';
+        try {
+          return JSON.stringify(parsed);
+        } catch {
+          return String(parsed);
+        }
       }
 
-      const updatePayload = {
+      const candidates = {
         provider_name: editForm.provider_name,
         provider_type: editForm.provider_type,
         routing_type: editForm.routing_type,
@@ -170,15 +192,69 @@
         website: editForm.website,
         round_trip_booking: editForm.round_trip_booking,
         investigated: editForm.investigated,
-        service_zone: serviceZoneValue,
+        service_zone: editForm.service_zone,
       };
 
-      // Remove null/undefined values
-      Object.keys(updatePayload).forEach(key => {
-        if (updatePayload[key] === null || updatePayload[key] === undefined) {
-          delete updatePayload[key];
+      const updatePayload = {};
+      for (const [key, nextValue] of Object.entries(candidates)) {
+        if (nextValue === undefined) continue;
+        const currentValue = selectedProvider[key];
+        if (canonicalizeForDiff(currentValue) !== canonicalizeForDiff(nextValue)) {
+          updatePayload[key] = nextValue;
         }
-      });
+      }
+
+      if (Object.keys(updatePayload).length === 0) {
+        editMode = false;
+        return;
+      }
+
+      // Basic shape validation for structured JSON fields (prevents storing invalid scalars)
+      const jsonFieldErrors = [];
+      if ('provider_name' in updatePayload) {
+        const name = String(updatePayload.provider_name || '').trim();
+        if (!name) jsonFieldErrors.push('Provider Name is required');
+      }
+      if ('schedule_type' in updatePayload) {
+        const schedule = tryParseJson(updatePayload.schedule_type);
+        if (schedule !== null && schedule !== undefined && schedule !== '' && (typeof schedule !== 'object' || Array.isArray(schedule))) {
+          jsonFieldErrors.push('Schedule Type must be a JSON object');
+        }
+      }
+      if ('booking' in updatePayload) {
+        const booking = tryParseJson(updatePayload.booking);
+        if (booking !== null && booking !== undefined && booking !== '' && (typeof booking !== 'object' || Array.isArray(booking))) {
+          jsonFieldErrors.push('Booking must be a JSON object');
+        }
+      }
+      if ('fare' in updatePayload) {
+        const fare = tryParseJson(updatePayload.fare);
+        if (fare !== null && fare !== undefined && fare !== '' && (typeof fare !== 'object' || Array.isArray(fare))) {
+          jsonFieldErrors.push('Fare must be a JSON object');
+        }
+      }
+      if ('contacts' in updatePayload) {
+        const contacts = tryParseJson(updatePayload.contacts);
+        if (contacts !== null && contacts !== undefined && contacts !== '' && !Array.isArray(contacts)) {
+          jsonFieldErrors.push('Contacts must be a JSON array');
+        }
+      }
+      if ('eligibility_reqs' in updatePayload) {
+        const eligibility = tryParseJson(updatePayload.eligibility_reqs);
+        if (eligibility !== null && eligibility !== undefined && eligibility !== '' && !Array.isArray(eligibility)) {
+          jsonFieldErrors.push('Eligibility Requirements must be a JSON array');
+        }
+      }
+      if ('service_zone' in updatePayload) {
+        const zone = tryParseJson(updatePayload.service_zone);
+        if (zone !== null && zone !== undefined && zone !== '' && (typeof zone !== 'object' || Array.isArray(zone))) {
+          jsonFieldErrors.push('Service Zone must be a GeoJSON object');
+        }
+      }
+
+      if (jsonFieldErrors.length > 0) {
+        throw new Error(jsonFieldErrors.join('; '));
+      }
 
       const { data: updatedProvider, error: updateError } = await updateProvider(providerId, updatePayload);
 
@@ -410,17 +486,27 @@
             <span class="text-xs font-medium text-muted-foreground uppercase tracking-wide">
               Provider Details
             </span>
-            {#if selectedProvider && !editMode}
-              <button
-                class="text-xs text-primary hover:text-primary/80 transition flex items-center gap-1"
-                onclick={enableEditMode}
-              >
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-                Edit
-              </button>
-            {/if}
+            <div class="flex items-center gap-2">
+              {#if selectedProvider}
+                <button
+                  class="text-xs text-muted-foreground hover:text-foreground transition"
+                  onclick={toggleJsonEnabled}
+                >
+                  {jsonEnabled ? 'Hide JSON' : 'Show JSON'}
+                </button>
+              {/if}
+              {#if selectedProvider && !editMode}
+                <button
+                  class="text-xs text-primary hover:text-primary/80 transition flex items-center gap-1"
+                  onclick={enableEditMode}
+                >
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  Edit
+                </button>
+              {/if}
+            </div>
           </div>
         </div>
 
@@ -474,11 +560,7 @@
                 <!-- svelte-ignore a11y_label_has_associated_control -->
                 <label class="block text-xs font-medium text-muted-foreground mb-1">Provider Type</label>
                 {#if editMode}
-                  <Input
-                    bind:value={editForm.provider_type}
-                    placeholder="e.g., ADA paratransit, fixed-route"
-                    class="text-sm"
-                  />
+                  <Input bind:value={editForm.provider_type} list="provider-type-options" placeholder="Select or type…" class="text-sm" />
                 {:else}
                   <div class="text-sm text-foreground">{selectedProvider.provider_type || '-'}</div>
                 {/if}
@@ -489,11 +571,7 @@
                 <!-- svelte-ignore a11y_label_has_associated_control -->
                 <label class="block text-xs font-medium text-muted-foreground mb-1">Routing Type</label>
                 {#if editMode}
-                  <Input
-                    bind:value={editForm.routing_type}
-                    placeholder="e.g., deviated fixed-route"
-                    class="text-sm"
-                  />
+                  <Input bind:value={editForm.routing_type} list="routing-type-options" placeholder="Select or type…" class="text-sm" />
                 {:else}
                   <div class="text-sm text-foreground">{selectedProvider.routing_type || '-'}</div>
                 {/if}
@@ -504,16 +582,17 @@
                 <!-- svelte-ignore a11y_label_has_associated_control -->
                 <label class="block text-xs font-medium text-muted-foreground mb-1">Schedule Type</label>
                 {#if editMode}
-                  <Textarea
-                    bind:value={editForm.schedule_type}
-                    placeholder="Schedule type (JSON format)"
-                    class="text-sm font-mono"
-                    rows="2"
-                  />
+                  <ScheduleTypeEditor bind:value={editForm.schedule_type} disabled={saving} jsonEnabled={jsonEnabled} />
                 {:else}
-                  <div class="text-sm text-foreground whitespace-pre-wrap font-mono bg-muted/50 rounded p-2 max-h-24 overflow-y-auto">
-                    {formatJsonField(selectedProvider.schedule_type) || '-'}
-                  </div>
+                  {#if jsonEnabled}
+                    <div class="text-sm text-foreground whitespace-pre-wrap font-mono bg-muted/50 rounded p-2 max-h-24 overflow-y-auto">
+                      {formatJsonField(selectedProvider.schedule_type) || '-'}
+                    </div>
+                  {:else}
+                    <div class="text-sm text-foreground bg-muted/50 rounded p-2">
+                      {formatScheduleType(selectedProvider.schedule_type) || '-'}
+                    </div>
+                  {/if}
                 {/if}
               </div>
 
@@ -522,16 +601,17 @@
                 <!-- svelte-ignore a11y_label_has_associated_control -->
                 <label class="block text-xs font-medium text-muted-foreground mb-1">Eligibility Requirements</label>
                 {#if editMode}
-                  <Textarea
-                    bind:value={editForm.eligibility_reqs}
-                    placeholder="Eligibility requirements (JSON or text)"
-                    class="text-sm font-mono"
-                    rows="3"
-                  />
+                  <EligibilityReqsEditor bind:value={editForm.eligibility_reqs} disabled={saving} jsonEnabled={jsonEnabled} />
                 {:else}
-                  <div class="text-sm text-foreground whitespace-pre-wrap font-mono bg-muted/50 rounded p-2 max-h-24 overflow-y-auto">
-                    {formatJsonField(selectedProvider.eligibility_reqs) || '-'}
-                  </div>
+                  {#if jsonEnabled}
+                    <div class="text-sm text-foreground whitespace-pre-wrap font-mono bg-muted/50 rounded p-2 max-h-24 overflow-y-auto">
+                      {formatJsonField(selectedProvider.eligibility_reqs) || '-'}
+                    </div>
+                  {:else}
+                    <div class="text-sm text-foreground whitespace-pre-wrap bg-muted/50 rounded p-2 max-h-24 overflow-y-auto">
+                      {formatEligibilityReqs(selectedProvider.eligibility_reqs) || '-'}
+                    </div>
+                  {/if}
                 {/if}
               </div>
 
@@ -540,16 +620,17 @@
                 <!-- svelte-ignore a11y_label_has_associated_control -->
                 <label class="block text-xs font-medium text-muted-foreground mb-1">Booking</label>
                 {#if editMode}
-                  <Textarea
-                    bind:value={editForm.booking}
-                    placeholder="Booking information (JSON format)"
-                    class="text-sm font-mono"
-                    rows="2"
-                  />
+                  <BookingEditor bind:value={editForm.booking} disabled={saving} jsonEnabled={jsonEnabled} />
                 {:else}
-                  <div class="text-sm text-foreground whitespace-pre-wrap font-mono bg-muted/50 rounded p-2 max-h-24 overflow-y-auto">
-                    {formatJsonField(selectedProvider.booking) || '-'}
-                  </div>
+                  {#if jsonEnabled}
+                    <div class="text-sm text-foreground whitespace-pre-wrap font-mono bg-muted/50 rounded p-2 max-h-24 overflow-y-auto">
+                      {formatJsonField(selectedProvider.booking) || '-'}
+                    </div>
+                  {:else}
+                    <div class="text-sm text-foreground whitespace-pre-wrap bg-muted/50 rounded p-2 max-h-24 overflow-y-auto">
+                      {formatBooking(selectedProvider.booking) || '-'}
+                    </div>
+                  {/if}
                 {/if}
               </div>
 
@@ -584,16 +665,17 @@
                 <!-- svelte-ignore a11y_label_has_associated_control -->
                 <label class="block text-xs font-medium text-muted-foreground mb-1">Contacts</label>
                 {#if editMode}
-                  <Textarea
-                    bind:value={editForm.contacts}
-                    placeholder="Contact information (JSON or text)"
-                    class="text-sm font-mono"
-                    rows="3"
-                  />
+                  <ContactsEditor bind:value={editForm.contacts} disabled={saving} jsonEnabled={jsonEnabled} />
                 {:else}
-                  <div class="text-sm text-foreground whitespace-pre-wrap font-mono bg-muted/50 rounded p-2 max-h-24 overflow-y-auto">
-                    {formatJsonField(selectedProvider.contacts) || '-'}
-                  </div>
+                  {#if jsonEnabled}
+                    <div class="text-sm text-foreground whitespace-pre-wrap font-mono bg-muted/50 rounded p-2 max-h-24 overflow-y-auto">
+                      {formatJsonField(selectedProvider.contacts) || '-'}
+                    </div>
+                  {:else}
+                    <div class="text-sm text-foreground whitespace-pre-wrap bg-muted/50 rounded p-2 max-h-24 overflow-y-auto">
+                      {formatContacts(selectedProvider.contacts) || '-'}
+                    </div>
+                  {/if}
                 {/if}
               </div>
 
@@ -602,16 +684,17 @@
                 <!-- svelte-ignore a11y_label_has_associated_control -->
                 <label class="block text-xs font-medium text-muted-foreground mb-1">Fare</label>
                 {#if editMode}
-                  <Textarea
-                    bind:value={editForm.fare}
-                    placeholder="Fare information (JSON format)"
-                    class="text-sm font-mono"
-                    rows="2"
-                  />
+                  <FareEditor bind:value={editForm.fare} disabled={saving} jsonEnabled={jsonEnabled} />
                 {:else}
-                  <div class="text-sm text-foreground whitespace-pre-wrap font-mono bg-muted/50 rounded p-2 max-h-24 overflow-y-auto">
-                    {formatJsonField(selectedProvider.fare) || '-'}
-                  </div>
+                  {#if jsonEnabled}
+                    <div class="text-sm text-foreground whitespace-pre-wrap font-mono bg-muted/50 rounded p-2 max-h-24 overflow-y-auto">
+                      {formatJsonField(selectedProvider.fare) || '-'}
+                    </div>
+                  {:else}
+                    <div class="text-sm text-foreground whitespace-pre-wrap bg-muted/50 rounded p-2 max-h-24 overflow-y-auto">
+                      {formatFare(selectedProvider.fare) || '-'}
+                    </div>
+                  {/if}
                 {/if}
               </div>
 
@@ -679,16 +762,17 @@
                   {/if}
                 </label>
                 {#if editMode}
-                  <Textarea
-                    bind:value={editForm.service_zone}
-                    placeholder="Service zone GeoJSON (FeatureCollection format)"
-                    class="text-sm font-mono"
-                    rows="6"
-                  />
+                  <ServiceZoneEditor bind:value={editForm.service_zone} disabled={saving} jsonEnabled={jsonEnabled} />
                 {:else}
-                  <div class="text-sm text-foreground whitespace-pre-wrap font-mono bg-muted/50 rounded p-2 max-h-48 overflow-y-auto">
-                    {formatJsonField(selectedProvider.service_zone) || '-'}
-                  </div>
+                  {#if jsonEnabled}
+                    <div class="text-sm text-foreground whitespace-pre-wrap font-mono bg-muted/50 rounded p-2 max-h-48 overflow-y-auto">
+                      {formatJsonField(selectedProvider.service_zone) || '-'}
+                    </div>
+                  {:else}
+                    <div class="text-sm text-foreground bg-muted/50 rounded p-2">
+                      {formatServiceZone(selectedProvider.service_zone) || '-'}
+                    </div>
+                  {/if}
                 {/if}
               </div>
 
@@ -726,6 +810,19 @@
     </Resizable.PaneGroup>
   </PageShell>
 {/if}
+
+<!-- Datalists for suggestive inputs -->
+<datalist id="provider-type-options">
+  {#each PROVIDER_TYPE_OPTIONS as opt}
+    <option value={opt.value}>{opt.label}</option>
+  {/each}
+</datalist>
+
+<datalist id="routing-type-options">
+  {#each ROUTING_TYPE_OPTIONS as opt}
+    <option value={opt.value}>{opt.label}</option>
+  {/each}
+</datalist>
 
 <style>
   :global(.leaflet-container) {

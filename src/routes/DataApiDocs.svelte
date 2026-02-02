@@ -1,6 +1,10 @@
 <script lang="ts">
   import PageShell from '$lib/components/PageShell.svelte';
 
+  const OPTIMAT_PROJECT_REF = 'htjohidcoyfuwfjecazu';
+  const OPTIMAT_SUPABASE_URL = `https://${OPTIMAT_PROJECT_REF}.supabase.co`;
+  const OPTIMAT_FUNCTIONS_BASE_URL = `${OPTIMAT_SUPABASE_URL}/functions/v1`;
+
   const toc = [
     { id: 'overview', label: 'Overview' },
     { id: 'auth', label: 'Base URL and Auth' },
@@ -160,12 +164,17 @@
 
       <h2 id="auth">Base URL and Auth</h2>
       <ul>
-        <li><strong>Base URL</strong>: <code>https://&lt;project-ref&gt;.supabase.co/functions/v1</code></li>
+        <li><strong>Base URL (OPTIMAT)</strong>: <code>{OPTIMAT_FUNCTIONS_BASE_URL}</code></li>
+        <li><strong>Project ref</strong>: <code>{OPTIMAT_PROJECT_REF}</code></li>
         <li>
           <strong>Headers</strong>:
-          <code>Authorization: Bearer &lt;anon-key&gt;</code>,
+          <code>Authorization: Bearer &lt;access-token-or-anon-key&gt;</code>,
           <code>apikey: &lt;anon-key&gt;</code>,
           <code>Content-Type: application/json</code>
+        </li>
+        <li>
+          <strong>JWT verification</strong>: <code>chat</code>, <code>chat-examples</code>, and <code>trip-records</code> are deployed with
+          JWT verification enabled (use a user <code>access_token</code>).
         </li>
       </ul>
 

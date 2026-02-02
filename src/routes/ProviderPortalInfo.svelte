@@ -1,36 +1,59 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { fade } from 'svelte/transition';
   import { push } from 'svelte-spa-router';
   import PageShell from '$lib/components/PageShell.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
-  import { Textarea } from '$lib/components/ui/textarea';
-  import { updateProvider } from '$lib/api';
+  import ScheduleTypeEditor from '$lib/components/providers/ScheduleTypeEditor.svelte';
+  import EligibilityReqsEditor from '$lib/components/providers/EligibilityReqsEditor.svelte';
+  import BookingEditor from '$lib/components/providers/BookingEditor.svelte';
+  import FareEditor from '$lib/components/providers/FareEditor.svelte';
+  import ContactsEditor from '$lib/components/providers/ContactsEditor.svelte';
+  import ServiceZoneEditor from '$lib/components/providers/ServiceZoneEditor.svelte';
+  import { updateProvider, type Provider } from '$lib/api';
   import providerSession, { clearProvider, setProvider } from '$lib/stores/providerSession';
   import mockDataEnabled from '$lib/stores/mockData';
   import { providerPortalNavItems } from '$lib/providerPortalNav';
+  import {
+    PROVIDER_TYPE_OPTIONS,
+    ROUTING_TYPE_OPTIONS,
+    formatBooking,
+    formatContacts,
+    formatEligibilityReqs,
+    formatFare,
+    formatScheduleType,
+    formatServiceZone,
+    tryParseJson,
+  } from '$lib/providers/providerFields';
 
   let editMode = false;
   let saving = false;
   let saveError: string | null = null;
   let saveSuccess = false;
-  let editForm: Record<string, unknown> = {};
+  let editForm: Record<string, any> = {};
+  let jsonEnabled = false;
 
-  $: provider = $providerSession.provider;
+  $: provider = $providerSession.provider as Provider | null;
   $: mockEnabled = $mockDataEnabled;
 
   $: if (provider && !editMode) {
     editForm = { ...provider };
   }
 
+  onMount(() => {
+    jsonEnabled = localStorage.getItem('optimat-provider-json') === 'true';
+  });
+
+  function toggleJsonEnabled() {
+    jsonEnabled = !jsonEnabled;
+    localStorage.setItem('optimat-provider-json', String(jsonEnabled));
+  }
+
   function enableEditMode() {
     if (!provider) return;
     editMode = true;
     editForm = { ...provider };
-
-    if (editForm.service_zone && typeof editForm.service_zone === 'object') {
-      editForm.service_zone = JSON.stringify(editForm.service_zone, null, 2);
-    }
 
     saveSuccess = false;
     saveError = null;
@@ -46,12 +69,18 @@
     try {
       const providerId = provider.provider_id || provider.id;
 
-      let serviceZoneValue = editForm.service_zone;
-      if (serviceZoneValue && typeof serviceZoneValue === 'object') {
-        serviceZoneValue = JSON.stringify(serviceZoneValue);
-      }
+      const canonicalizeForDiff = (v: unknown) => {
+        if (v === undefined) return '__undefined__';
+        const parsed = tryParseJson(v);
+        if (parsed === undefined) return '__undefined__';
+        try {
+          return JSON.stringify(parsed);
+        } catch {
+          return String(parsed);
+        }
+      };
 
-      const updatePayload = {
+      const candidates: Record<string, unknown> = {
         provider_name: editForm.provider_name,
         provider_type: editForm.provider_type,
         routing_type: editForm.routing_type,
@@ -63,14 +92,69 @@
         website: editForm.website,
         round_trip_booking: editForm.round_trip_booking,
         investigated: editForm.investigated,
-        service_zone: serviceZoneValue,
-      } as Record<string, unknown>;
+        service_zone: editForm.service_zone,
+      };
 
-      Object.keys(updatePayload).forEach((key) => {
-        if (updatePayload[key] === null || updatePayload[key] === undefined) {
-          delete updatePayload[key];
+      const updatePayload: Record<string, unknown> = {};
+      for (const [key, nextValue] of Object.entries(candidates)) {
+        if (nextValue === undefined) continue;
+        const currentValue = (provider as unknown as Record<string, unknown>)[key];
+        if (canonicalizeForDiff(currentValue) !== canonicalizeForDiff(nextValue)) {
+          updatePayload[key] = nextValue;
         }
-      });
+      }
+
+      if (Object.keys(updatePayload).length === 0) {
+        editMode = false;
+        return;
+      }
+
+      // Basic shape validation for structured JSON fields (prevents storing invalid scalars)
+      const jsonFieldErrors: string[] = [];
+      if ('provider_name' in updatePayload) {
+        const name = String(updatePayload.provider_name || '').trim();
+        if (!name) jsonFieldErrors.push('Provider Name is required');
+      }
+      if ('schedule_type' in updatePayload) {
+        const schedule = tryParseJson(updatePayload.schedule_type);
+        if (schedule !== null && schedule !== undefined && schedule !== '' && (typeof schedule !== 'object' || Array.isArray(schedule))) {
+          jsonFieldErrors.push('Schedule Type must be a JSON object');
+        }
+      }
+      if ('booking' in updatePayload) {
+        const booking = tryParseJson(updatePayload.booking);
+        if (booking !== null && booking !== undefined && booking !== '' && (typeof booking !== 'object' || Array.isArray(booking))) {
+          jsonFieldErrors.push('Booking must be a JSON object');
+        }
+      }
+      if ('fare' in updatePayload) {
+        const fare = tryParseJson(updatePayload.fare);
+        if (fare !== null && fare !== undefined && fare !== '' && (typeof fare !== 'object' || Array.isArray(fare))) {
+          jsonFieldErrors.push('Fare must be a JSON object');
+        }
+      }
+      if ('contacts' in updatePayload) {
+        const contacts = tryParseJson(updatePayload.contacts);
+        if (contacts !== null && contacts !== undefined && contacts !== '' && !Array.isArray(contacts)) {
+          jsonFieldErrors.push('Contacts must be a JSON array');
+        }
+      }
+      if ('eligibility_reqs' in updatePayload) {
+        const eligibility = tryParseJson(updatePayload.eligibility_reqs);
+        if (eligibility !== null && eligibility !== undefined && eligibility !== '' && !Array.isArray(eligibility)) {
+          jsonFieldErrors.push('Eligibility Requirements must be a JSON array');
+        }
+      }
+      if ('service_zone' in updatePayload) {
+        const zone = tryParseJson(updatePayload.service_zone);
+        if (zone !== null && zone !== undefined && zone !== '' && (typeof zone !== 'object' || Array.isArray(zone))) {
+          jsonFieldErrors.push('Service Zone must be a GeoJSON object');
+        }
+      }
+
+      if (jsonFieldErrors.length > 0) {
+        throw new Error(jsonFieldErrors.join('; '));
+      }
 
       const { data: updatedProvider, error: updateError } = await updateProvider(providerId, updatePayload);
 
@@ -152,9 +236,14 @@
               <h1 class="text-xl font-bold text-slate-900">{provider.provider_name}</h1>
               <p class="text-sm text-slate-600">Provider ID: {provider.provider_id || provider.id}</p>
             </div>
-            {#if !editMode}
-              <Button onclick={enableEditMode}>Edit Information</Button>
-            {/if}
+            <div class="flex items-center gap-2">
+              <Button variant="outline" size="sm" onclick={toggleJsonEnabled}>
+                {jsonEnabled ? 'Hide JSON' : 'Show JSON'}
+              </Button>
+              {#if !editMode}
+                <Button onclick={enableEditMode}>Edit Information</Button>
+              {/if}
+            </div>
           </div>
 
           {#if saveSuccess}
@@ -185,7 +274,7 @@
                   <!-- svelte-ignore a11y_label_has_associated_control -->
                   <label class="block text-sm font-medium text-slate-700 mb-2">Provider Type</label>
                   {#if editMode}
-                    <Input bind:value={editForm.provider_type} placeholder="e.g., ADA paratransit" />
+                    <Input bind:value={editForm.provider_type} list="provider-type-options" placeholder="Select or type…" />
                   {:else}
                     <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2">{provider.provider_type || '-'}</div>
                   {/if}
@@ -195,7 +284,7 @@
                   <!-- svelte-ignore a11y_label_has_associated_control -->
                   <label class="block text-sm font-medium text-slate-700 mb-2">Routing Type</label>
                   {#if editMode}
-                    <Input bind:value={editForm.routing_type} placeholder="e.g., deviated fixed-route" />
+                    <Input bind:value={editForm.routing_type} list="routing-type-options" placeholder="Select or type…" />
                   {:else}
                     <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2">{provider.routing_type || '-'}</div>
                   {/if}
@@ -206,16 +295,17 @@
                 <!-- svelte-ignore a11y_label_has_associated_control -->
                 <label class="block text-sm font-medium text-slate-700 mb-2">Schedule Type</label>
                 {#if editMode}
-                  <Textarea
-                    bind:value={editForm.schedule_type}
-                    placeholder="Schedule type (JSON format)"
-                    class="font-mono text-sm"
-                    rows="2"
-                  />
+                  <ScheduleTypeEditor bind:value={editForm.schedule_type} disabled={saving} jsonEnabled={jsonEnabled} />
                 {:else}
-                  <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2 font-mono text-sm whitespace-pre-wrap max-h-32 overflow-y-auto">
-                    {formatJsonField(provider.schedule_type) || '-'}
-                  </div>
+                  {#if jsonEnabled}
+                    <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2 font-mono text-sm whitespace-pre-wrap max-h-32 overflow-y-auto">
+                      {formatJsonField(provider.schedule_type) || '-'}
+                    </div>
+                  {:else}
+                    <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2">
+                      {formatScheduleType(provider.schedule_type) || '-'}
+                    </div>
+                  {/if}
                 {/if}
               </div>
 
@@ -223,16 +313,17 @@
                 <!-- svelte-ignore a11y_label_has_associated_control -->
                 <label class="block text-sm font-medium text-slate-700 mb-2">Eligibility Requirements</label>
                 {#if editMode}
-                  <Textarea
-                    bind:value={editForm.eligibility_reqs}
-                    placeholder="Eligibility requirements"
-                    class="font-mono text-sm"
-                    rows="3"
-                  />
+                  <EligibilityReqsEditor bind:value={editForm.eligibility_reqs} disabled={saving} jsonEnabled={jsonEnabled} />
                 {:else}
-                  <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2 font-mono text-sm whitespace-pre-wrap max-h-32 overflow-y-auto">
-                    {formatJsonField(provider.eligibility_reqs) || '-'}
-                  </div>
+                  {#if jsonEnabled}
+                    <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2 font-mono text-sm whitespace-pre-wrap max-h-32 overflow-y-auto">
+                      {formatJsonField(provider.eligibility_reqs) || '-'}
+                    </div>
+                  {:else}
+                    <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2 text-sm whitespace-pre-wrap max-h-32 overflow-y-auto">
+                      {formatEligibilityReqs(provider.eligibility_reqs) || '-'}
+                    </div>
+                  {/if}
                 {/if}
               </div>
 
@@ -240,16 +331,17 @@
                 <!-- svelte-ignore a11y_label_has_associated_control -->
                 <label class="block text-sm font-medium text-slate-700 mb-2">Booking Information</label>
                 {#if editMode}
-                  <Textarea
-                    bind:value={editForm.booking}
-                    placeholder="Booking information"
-                    class="font-mono text-sm"
-                    rows="2"
-                  />
+                  <BookingEditor bind:value={editForm.booking} disabled={saving} jsonEnabled={jsonEnabled} />
                 {:else}
-                  <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2 font-mono text-sm whitespace-pre-wrap max-h-32 overflow-y-auto">
-                    {formatJsonField(provider.booking) || '-'}
-                  </div>
+                  {#if jsonEnabled}
+                    <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2 font-mono text-sm whitespace-pre-wrap max-h-32 overflow-y-auto">
+                      {formatJsonField(provider.booking) || '-'}
+                    </div>
+                  {:else}
+                    <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2 text-sm whitespace-pre-wrap max-h-32 overflow-y-auto">
+                      {formatBooking(provider.booking) || '-'}
+                    </div>
+                  {/if}
                 {/if}
               </div>
 
@@ -257,16 +349,17 @@
                 <!-- svelte-ignore a11y_label_has_associated_control -->
                 <label class="block text-sm font-medium text-slate-700 mb-2">Fare Information</label>
                 {#if editMode}
-                  <Textarea
-                    bind:value={editForm.fare}
-                    placeholder="Fare information"
-                    class="font-mono text-sm"
-                    rows="2"
-                  />
+                  <FareEditor bind:value={editForm.fare} disabled={saving} jsonEnabled={jsonEnabled} />
                 {:else}
-                  <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2 font-mono text-sm whitespace-pre-wrap max-h-32 overflow-y-auto">
-                    {formatJsonField(provider.fare) || '-'}
-                  </div>
+                  {#if jsonEnabled}
+                    <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2 font-mono text-sm whitespace-pre-wrap max-h-32 overflow-y-auto">
+                      {formatJsonField(provider.fare) || '-'}
+                    </div>
+                  {:else}
+                    <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2 text-sm whitespace-pre-wrap max-h-32 overflow-y-auto">
+                      {formatFare(provider.fare) || '-'}
+                    </div>
+                  {/if}
                 {/if}
               </div>
 
@@ -295,16 +388,17 @@
                 <!-- svelte-ignore a11y_label_has_associated_control -->
                 <label class="block text-sm font-medium text-slate-700 mb-2">Contact Information</label>
                 {#if editMode}
-                  <Textarea
-                    bind:value={editForm.contacts}
-                    placeholder="Contact information"
-                    class="font-mono text-sm"
-                    rows="3"
-                  />
+                  <ContactsEditor bind:value={editForm.contacts} disabled={saving} jsonEnabled={jsonEnabled} />
                 {:else}
-                  <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2 font-mono text-sm whitespace-pre-wrap max-h-32 overflow-y-auto">
-                    {formatJsonField(provider.contacts) || '-'}
-                  </div>
+                  {#if jsonEnabled}
+                    <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2 font-mono text-sm whitespace-pre-wrap max-h-32 overflow-y-auto">
+                      {formatJsonField(provider.contacts) || '-'}
+                    </div>
+                  {:else}
+                    <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2 text-sm whitespace-pre-wrap max-h-32 overflow-y-auto">
+                      {formatContacts(provider.contacts) || '-'}
+                    </div>
+                  {/if}
                 {/if}
               </div>
 
@@ -371,16 +465,17 @@
                   {/if}
                 </label>
                 {#if editMode}
-                  <Textarea
-                    bind:value={editForm.service_zone}
-                    placeholder="Service zone GeoJSON (FeatureCollection format)"
-                    class="font-mono text-sm"
-                    rows="6"
-                  />
+                  <ServiceZoneEditor bind:value={editForm.service_zone} disabled={saving} jsonEnabled={jsonEnabled} />
                 {:else}
-                  <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2 font-mono text-sm whitespace-pre-wrap max-h-48 overflow-y-auto">
-                    {formatJsonField(provider.service_zone) || '-'}
-                  </div>
+                  {#if jsonEnabled}
+                    <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2 font-mono text-sm whitespace-pre-wrap max-h-48 overflow-y-auto">
+                      {formatJsonField(provider.service_zone) || '-'}
+                    </div>
+                  {:else}
+                    <div class="text-slate-900 bg-slate-50 rounded-md px-3 py-2 text-sm">
+                      {formatServiceZone(provider.service_zone) || '-'}
+                    </div>
+                  {/if}
                 {/if}
               </div>
             </div>
@@ -415,6 +510,19 @@
     {/if}
   </div>
 </PageShell>
+
+<!-- Datalists for suggestive inputs -->
+<datalist id="provider-type-options">
+  {#each PROVIDER_TYPE_OPTIONS as opt}
+    <option value={opt.value}>{opt.label}</option>
+  {/each}
+</datalist>
+
+<datalist id="routing-type-options">
+  {#each ROUTING_TYPE_OPTIONS as opt}
+    <option value={opt.value}>{opt.label}</option>
+  {/each}
+</datalist>
 
 <style>
   :global(.font-mono) {

@@ -181,10 +181,13 @@
     return types[type] || type;
   }
 
-  function parseBookingInfo(bookingString) {
+  function parseBookingInfo(bookingValue) {
     try {
-      const booking = JSON.parse(bookingString);
-      return booking.call || null;
+      const booking = typeof bookingValue === 'string' ? JSON.parse(bookingValue) : bookingValue;
+      if (!booking) return null;
+      if (booking.method === 'call' && typeof booking.details === 'string') return booking.details;
+      const phone = booking.call || booking.phone || booking.contact;
+      return typeof phone === 'string' ? phone : null;
     } catch {
       return null;
     }

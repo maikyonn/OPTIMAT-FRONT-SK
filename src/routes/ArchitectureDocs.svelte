@@ -1,6 +1,9 @@
 <script lang="ts">
   import PageShell from '$lib/components/PageShell.svelte';
 
+  const OPTIMAT_PROJECT_REF = 'htjohidcoyfuwfjecazu';
+  const OPTIMAT_SUPABASE_URL = `https://${OPTIMAT_PROJECT_REF}.supabase.co`;
+
   const toc = [
     { id: 'overview', label: 'Overview' },
     { id: 'frontend', label: 'Frontend (SvelteKit + SPA Router)' },
@@ -128,7 +131,8 @@
       </p>
       <ul>
         <li>
-          <strong>Function URL pattern</strong>: <code>{'{SUPABASE_URL}'}/functions/v1/&lt;path&gt;</code>
+          <strong>Function URL pattern</strong>: <code>{'{SUPABASE_URL}'}/functions/v1/&lt;path&gt;</code> (OPTIMAT:
+          <code>{OPTIMAT_SUPABASE_URL}/functions/v1/&lt;path&gt;</code>)
         </li>
         <li>
           <strong>REST-ish routing</strong>: many functions implement subroutes by parsing the URL path (e.g. <code>providers/search</code>).

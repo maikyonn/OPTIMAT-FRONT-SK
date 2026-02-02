@@ -39,6 +39,7 @@ export interface Provider {
   provider_type: string;
   provider_org?: string;
   service_zone?: string | object;
+  has_service_zone?: boolean;
   service_hours?: string | object;
   eligibility_reqs?: string | string[] | object;
   booking?: string | object;
@@ -46,10 +47,39 @@ export interface Provider {
   latitude?: number;
   longitude?: number;
   routing_type?: string;
+  planning_type?: string;
   schedule_type?: string | object;
   fare?: string | object;
   contacts?: string | object;
+  round_trip_booking?: boolean;
+  investigated?: boolean;
   _zone_color?: string;
+}
+
+function parseJsonIfString(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  const first = trimmed[0];
+  if (first !== '{' && first !== '[') return value;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+}
+
+function normalizeProviderForUi(provider: Provider): Provider {
+  return {
+    ...provider,
+    schedule_type: parseJsonIfString(provider.schedule_type) as Provider['schedule_type'],
+    eligibility_reqs: parseJsonIfString(provider.eligibility_reqs) as Provider['eligibility_reqs'],
+    booking: parseJsonIfString(provider.booking) as Provider['booking'],
+    fare: parseJsonIfString(provider.fare) as Provider['fare'],
+    contacts: parseJsonIfString(provider.contacts) as Provider['contacts'],
+    service_hours: parseJsonIfString(provider.service_hours) as Provider['service_hours'],
+    service_zone: parseJsonIfString(provider.service_zone) as Provider['service_zone'],
+  };
 }
 
 export interface ProviderFilterRequest {
@@ -233,7 +263,8 @@ export async function geocodeAddress(address: string): Promise<GeocodeResult> {
  */
 export async function getAllProviders(): Promise<{ data: Provider[] | null; error: Error | null }> {
   const { data, error } = await fetchEdgeFunction<{ data: Provider[] }>('providers');
-  return { data: data?.data || null, error };
+  const providers = Array.isArray(data?.data) ? data!.data.map(normalizeProviderForUi) : null;
+  return { data: providers, error };
 }
 
 /**
@@ -248,7 +279,8 @@ export async function searchProviders(
   const { data, error } = await fetchEdgeFunction<Provider[]>('providers/search', {
     params: { q: query },
   });
-  return { data, error };
+  const providers = Array.isArray(data) ? data.map(normalizeProviderForUi) : null;
+  return { data: providers, error };
 }
 
 /**
@@ -264,7 +296,14 @@ export async function filterProviders(
     method: 'POST',
     body: request,
   });
-  return { data, error };
+  if (!data) return { data: null, error };
+  return {
+    data: {
+      ...data,
+      data: Array.isArray(data.data) ? data.data.map(normalizeProviderForUi) : [],
+    },
+    error,
+  };
 }
 
 /**
@@ -290,7 +329,7 @@ export async function getProvider(
   providerId: string | number
 ): Promise<{ data: Provider | null; error: Error | null }> {
   const { data, error } = await fetchEdgeFunction<Provider>(`providers/${providerId}`);
-  return { data, error };
+  return { data: data ? normalizeProviderForUi(data) : null, error };
 }
 
 /**
@@ -308,7 +347,7 @@ export async function updateProvider(
     method: 'PUT',
     body: providerData,
   });
-  return { data, error };
+  return { data: data ? normalizeProviderForUi(data) : null, error };
 }
 
 // =============================================================================

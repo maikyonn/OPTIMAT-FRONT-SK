@@ -49,15 +49,15 @@ interface ProviderUpdate {
   provider_name?: string;
   provider_type?: string;
   routing_type?: string;
-  schedule_type?: string;
-  eligibility_reqs?: string;
-  booking?: string;
-  fare?: string;
-  contacts?: string;
+  schedule_type?: unknown;
+  eligibility_reqs?: unknown;
+  booking?: unknown;
+  fare?: unknown;
+  contacts?: unknown;
   website?: string;
   round_trip_booking?: boolean;
   investigated?: boolean;
-  service_zone?: string;
+  service_zone?: unknown;
 }
 
 interface GeoCoordinate {
@@ -721,17 +721,45 @@ async function updateProvider(
 
     for (const [field, { column, isJsonb }] of Object.entries(fieldMapping)) {
       const value = updateData[field as keyof ProviderUpdate];
-      if (value !== undefined && value !== null) {
-        if (isJsonb && typeof value === "string") {
+      if (value !== undefined) {
+        if (!isJsonb) {
+          updates[column] = value;
+          continue;
+        }
+
+        if (value === null) {
+          updates[column] = null;
+          continue;
+        }
+
+        let parsed: unknown = value;
+        if (typeof value === "string") {
+          const trimmed = value.trim();
+          if (!trimmed) {
+            // Treat empty string as null (clears the field)
+            updates[column] = null;
+            continue;
+          }
           try {
-            updates[column] = JSON.parse(value);
+            parsed = JSON.parse(trimmed);
           } catch {
-            console.warn(`Failed to parse JSON for field ${field}, storing as-is`);
-            updates[column] = value;
+            return errorResponse(`Invalid JSON for field '${field}'`, 400, origin);
+          }
+        }
+
+        // Enforce basic shapes to avoid storing JSONB scalar strings/numbers accidentally
+        const expectsArray = field === "eligibility_reqs" || field === "contacts";
+        if (expectsArray) {
+          if (parsed !== null && parsed !== undefined && !Array.isArray(parsed)) {
+            return errorResponse(`Field '${field}' must be a JSON array`, 400, origin);
           }
         } else {
-          updates[column] = value;
+          if (parsed !== null && parsed !== undefined && (typeof parsed !== "object" || Array.isArray(parsed))) {
+            return errorResponse(`Field '${field}' must be a JSON object`, 400, origin);
+          }
         }
+
+        updates[column] = parsed;
       }
     }
 
