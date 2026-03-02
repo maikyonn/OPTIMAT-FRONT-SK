@@ -13,6 +13,7 @@
 
 	  const defaultNavItems = [
 	    { label: 'Service Map', href: '/providers-info' },
+	    { label: 'What is OPTIMAT', href: '/what-is-optimat' },
 	    { label: 'Provider Portal', href: '/provider-portal' },
 	    { label: 'Architecture', href: '/architecture' },
 	    { label: 'API Docs', href: '/api-docs', icon: 'API' },

@@ -10,6 +10,7 @@ import ProviderPortalTripUpload from './routes/ProviderPortalTripUpload.svelte';
 import ArchitectureDocs from './routes/ArchitectureDocs.svelte';
 import DataApiDocs from './routes/DataApiDocs.svelte';
 import UniversalServiceDashboard from './routes/UniversalServiceDashboard.svelte';
+import WhatIsOptimat from './routes/WhatIsOptimat.svelte';
 
 const routes = {
   // Map interface (default)
@@ -37,6 +38,7 @@ const routes = {
   '/architecture': ArchitectureDocs,
   '/api-docs': DataApiDocs,
   '/universal-service-dashboard': UniversalServiceDashboard,
+  '/what-is-optimat': WhatIsOptimat,
 
   // Beta signup page
   '/beta-signup': BetaSignup,
